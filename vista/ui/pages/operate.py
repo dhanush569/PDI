@@ -190,7 +190,7 @@ class OperatePage(Page):
         self.job_combo.setEnabled(can)
         if not self._restored and self.ex.job is None and self.ctx.settings.get("remember_last_job"):
             self._restored = True
-            last = self.ctx.settings.get("last_run_job_id")
+            last = self.ctx.settings.get("last_run_job_id") or self.ctx.settings.get("last_job_id")
             if last and self.job_combo.findData(last) > 0:
                 self.select_job(last)
 
@@ -254,8 +254,10 @@ class OperatePage(Page):
                 self.variant_combo.addItem(f"{v['code']} - {v['name']}", v["code"])
         self.expected_lbl.setText(f"expected {job.get('expected_cycle_s') or '-'} s")
         try:
-            self.ctx.settings_repo.set("last_run_job_id", job_id, self.ctx.session.user_id)
+            self.ctx.settings_repo.set("last_run_job_id", job_id, self.ctx.session.user_id if self.ctx.session else None)
+            self.ctx.settings_repo.set("last_job_id", job_id, self.ctx.session.user_id if self.ctx.session else None)
             self.ctx.settings["last_run_job_id"] = job_id
+            self.ctx.settings["last_job_id"] = job_id
         except Exception:
             pass
         self.ctx.audit("JOB_LOADED", "job", job_id, {"code": job["code"], "revision": job["revision"]})

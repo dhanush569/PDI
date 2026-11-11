@@ -31,7 +31,8 @@ class FakeWorker:
 
 
 def build():
-    env = Path(os.environ.get("VISTA_TEST_ENV", "/tmp/test.env"))
+    default_env = Path(__file__).resolve().parents[1] / ".env"
+    env = Path(os.environ.get("VISTA_TEST_ENV", default_env if default_env.exists() else "/tmp/test.env"))
     os.environ["DB_SCHEMA"] = "vista_test"
     cfg = load_config(env)
     assert cfg.db.schema == "vista_test"

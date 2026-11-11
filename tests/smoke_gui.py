@@ -21,7 +21,8 @@ shots = Path(sys.argv[1]) if len(sys.argv) > 1 else None
 app = QApplication(sys.argv)
 apply_theme(app)
 os.environ["DB_SCHEMA"] = "vista_gui"
-cfg = load_config(Path(os.environ.get("VISTA_TEST_ENV", "/tmp/test.env")))
+default_env = Path(__file__).resolve().parents[1] / ".env"
+cfg = load_config(Path(os.environ.get("VISTA_TEST_ENV", default_env if default_env.exists() else "/tmp/test.env")))
 db = Database(cfg.db)
 db.open()
 db.execute("DROP SCHEMA IF EXISTS vista_gui CASCADE")

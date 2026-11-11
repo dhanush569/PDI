@@ -8,3 +8,4 @@ dist/
 __pycache__/
 *.pyc
 .venv/
+check_report.txt
