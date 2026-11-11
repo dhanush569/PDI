@@ -75,7 +75,14 @@ class DeviceCard(QFrame):
     def set(self, sub: str, line2: str, state: str) -> None:
         self.sub.setText(sub)
         self.line2.setText(line2)
-        ico, col = {"ok": ("check_circle", C["ok"]), "error": ("x_circle", C["ng"])}.get(state, ("info", C["faint"]))
+        status_map = {
+            "ok": ("check_circle", C["ok"]),
+            "error": ("x_circle", C["ng"]),
+            "warn": ("alert", C["warn"]),
+            "sim": ("info", C["warn"]),
+            "idle": ("info", C["faint"]),
+        }
+        ico, col = status_map.get(state, ("info", C["faint"]))
         self.status.setPixmap(icon(ico, col, 20).pixmap(20, 20))
 
     def action(self, text: str, slot=None, menu: QMenu | None = None) -> None:
@@ -375,15 +382,29 @@ class ConnectivityPage(Page):
             self.lay.addLayout(grid)
             self.lay.addSpacing(8)
         self.lay.addStretch(1)
-        main.scanned_any.connect(lambda code: self.scans.insert(0, code))
+        main.scanned_any.connect(self._on_scanned)
         main.worker.status.connect(self._cam_status)
         self.sel = "projector"
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._on_tick)
+        self._refresh_timer.start(2500)
+
+    def _on_tick(self) -> None:
+        if self.isVisible():
+            self.on_show()
+
+    def _on_scanned(self, code: str) -> None:
+        self.scans.insert(0, code)
+        if self.isVisible():
+            self.on_show()
 
     def _cam_status(self, st: dict) -> None:
         if st.get("camera") == "error":
             self.cam_ok = False
         elif st.get("camera") == "ok":
             self.cam_ok = True
+        if self.isVisible():
+            self.on_show()
 
     def _popup(self, cls) -> None:
         try:
@@ -410,30 +431,142 @@ class ConnectivityPage(Page):
         ctx, s = self.ctx, self.ctx.settings
         cal = ctx.calibration
         cal_txt = f"Calibrated {datetime.fromtimestamp(cal.created):%Y-%m-%d}" if cal else "Not calibrated"
-        pscr = self.main.projector.windowHandle().screen().name() if self.main.projector.windowHandle() else \
-            (s.get("projector_screen") or "auto")
-        self.cards["projector"].set(f"Optoma ZH406ST · display {s.get('projector_screen') or pscr}",
-                                    f"{cal_txt} · PJLink {s.get('pjlink_host') or 'not set'}", "ok" if cal else "warn")
+
+        # 1. Projector (Optoma ZH406ST) - check for physical secondary display
+        screens = QGuiApplication.screens()
+        proj_screen_name = s.get("projector_screen") or ""
+        matched_screen = None
+        if proj_screen_name:
+            matched_screen = next((scr for scr in screens if scr.name() == proj_screen_name), None)
+        elif len(screens) > 1:
+            matched_screen = screens[1]
+
+        pjlink_host = s.get("pjlink_host", "").strip()
+        pjlink_txt = f"PJLink {pjlink_host}" if pjlink_host else "PJLink not set"
+
+        if matched_screen is not None:
+            g = matched_screen.geometry()
+            self.cards["projector"].set(
+                f"Optoma ZH406ST · {matched_screen.name()} ({g.width()}x{g.height()})",
+                f"{cal_txt} · {pjlink_txt}",
+                "ok" if cal else "warn",
+            )
+        else:
+            self.cards["projector"].set(
+                "Optoma ZH406ST · Disconnected",
+                f"No secondary display (HDMI/DP) · {pjlink_txt}",
+                "error",
+            )
+
+        # 2. Operator touch screen
         scr = self.main.screen()
         g = scr.geometry()
         self.cards["screen"].set(f"{scr.name()} · {g.width()}x{g.height()}", "Touch screen for operators", "ok")
+
+        # 3. 3D Sensor (Depth) & RGB Camera - distinguish simulation vs physical RealSense
+        is_sim = getattr(ctx.cfg, "camera_backend", "realsense") == "sim"
         info = ctx.camera.info() if ctx.camera else {}
-        state = "ok" if self.cam_ok or self.main.worker.connected else "error"
-        self.cards["depth"].set(f"{info.get('name', 'RealSense')} · {info.get('serial', '-')}",
-                                f"{cal_txt} · {self.main.worker.fps:.0f} FPS", state)
-        self.cards["rgb"].set(f"{info.get('serial', '-')} · colour aligned to depth", cal_txt, state)
+        fps = self.main.worker.fps
+
+        if is_sim:
+            self.cards["depth"].set(
+                "Simulated 3D Sensor (Software)",
+                f"CAMERA_BACKEND=sim · No physical hardware ({fps:.0f} FPS)",
+                "sim",
+            )
+            self.cards["rgb"].set(
+                "Simulated RGB Stream (Software)",
+                f"Synthetic bench camera · {cal_txt}",
+                "sim",
+            )
+        else:
+            is_connected = self.cam_ok or self.main.worker.connected
+            if is_connected:
+                dev_name = info.get("name", "RealSense D456 / D457")
+                serial = info.get("serial", "-")
+                self.cards["depth"].set(
+                    f"{dev_name} · {serial}",
+                    f"{cal_txt} · {fps:.0f} FPS",
+                    "ok" if cal else "warn",
+                )
+                self.cards["rgb"].set(
+                    f"{serial} · colour aligned to depth",
+                    cal_txt,
+                    "ok" if cal else "warn",
+                )
+            else:
+                self.cards["depth"].set(
+                    "RealSense 3D Sensor · Disconnected",
+                    "No RealSense device detected on USB 3.0",
+                    "error",
+                )
+                self.cards["rgb"].set(
+                    "RealSense RGB · Disconnected",
+                    "Sensor offline",
+                    "error",
+                )
+
+        # 4. Vision Camera (Optional 2D UVC)
         vi = ctx.cfg.vision_camera_index
-        self.cards["vision"].set(f"UVC index {vi}" if vi >= 0 else "Not configured",
-                                 "Calibrated" if cal and cal.H_vision2bench is not None else
-                                 ("Set VISION_CAMERA_INDEX in .env" if vi < 0 else "Not calibrated"),
-                                 ("ok" if self.main.worker.vision_cam is not None else "error") if vi >= 0 else "idle")
+        if vi >= 0:
+            if self.main.worker.vision_cam is not None:
+                self.cards["vision"].set(
+                    f"UVC Camera (Index {vi}) · Connected",
+                    "Calibrated" if cal and cal.H_vision2bench is not None else "Not calibrated",
+                    "ok",
+                )
+            else:
+                self.cards["vision"].set(
+                    f"UVC Camera (Index {vi}) · Disconnected",
+                    "Camera index unreachable",
+                    "error",
+                )
+        else:
+            self.cards["vision"].set(
+                "Vision Camera · Not configured",
+                "Set VISION_CAMERA_INDEX in .env to enable",
+                "idle",
+            )
+
+        # 5. Scanner (Barcode / QR code)
         mode = s.get("scanner_mode", "KEYBOARD")
-        self.cards["scanner"].set("USB keyboard wedge" if mode == "KEYBOARD" else f"Serial {s.get('scanner_port')}",
-                                  f"Last scan: {self.scans[0] if self.scans else '-'}", "ok")
+        if mode == "SERIAL":
+            port = s.get("scanner_port", "").strip()
+            port_found = False
+            if port:
+                try:
+                    import serial.tools.list_ports
+                    available = [p.device.upper() for p in serial.tools.list_ports.comports()]
+                    port_found = port.upper() in available
+                except Exception:
+                    port_found = False
+            if port_found:
+                self.cards["scanner"].set(
+                    f"Serial Scanner · {port}",
+                    f"Last scan: {self.scans[0] if self.scans else 'None'}",
+                    "ok",
+                )
+            else:
+                self.cards["scanner"].set(
+                    f"Serial Scanner · {port or 'Port not set'} (Not found)",
+                    "Port unavailable · Check USB connection",
+                    "error",
+                )
+        else:
+            last_scan_txt = f"Last scan: {self.scans[0]}" if self.scans else "Awaiting scan input"
+            self.cards["scanner"].set(
+                "USB Keyboard Wedge (Listening)",
+                f"{last_scan_txt} · Virtual input",
+                "idle",
+            )
+
+        # 6. Database
         ok = ctx.db.ping()
-        self.cards["database"].set(f"{ctx.cfg.db.host}:{ctx.cfg.db.port} / {ctx.cfg.db.name}",
-                                   f"Schema {ctx.cfg.db.schema} · {ctx.recorder.pending} queued",
-                                   "ok" if ok else "error")
+        self.cards["database"].set(
+            f"{ctx.cfg.db.host}:{ctx.cfg.db.port} / {ctx.cfg.db.name}",
+            f"Schema {ctx.cfg.db.schema} · {ctx.recorder.pending} queued",
+            "ok" if ok else "error",
+        )
         self._select(self.sel)
 
     def _select(self, key: str) -> None:

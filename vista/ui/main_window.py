@@ -688,8 +688,12 @@ class MainWindow(QMainWindow):
             self.add_message(st.get("error", "Camera error"), "error", "Camera")
         elif "fps" in st:
             vis = " · vision camera" if self.worker.vision_cam is not None else ""
-            cam.setText(f"  3D sensor {st['fps']:.0f} FPS{vis}  ")
-            cam.setObjectName("ChipOk" if st["fps"] >= 10 else "ChipWarn")
+            if getattr(self.ctx.cfg, "camera_backend", "realsense") == "sim":
+                cam.setText(f"  Simulated camera ({st['fps']:.0f} FPS){vis}  ")
+                cam.setObjectName("ChipWarn")
+            else:
+                cam.setText(f"  3D sensor {st['fps']:.0f} FPS{vis}  ")
+                cam.setObjectName("ChipOk" if st["fps"] >= 10 else "ChipWarn")
         cam.style().unpolish(cam)
         cam.style().polish(cam)
 
