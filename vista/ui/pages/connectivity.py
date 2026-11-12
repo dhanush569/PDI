@@ -135,10 +135,12 @@ class ProjectorPopup(Popup):
         s = ctx.settings
         f = QFormLayout()
         self.screen = QComboBox()
+        self.screen.addItem("<Auto / Secondary Display>", "")
         for scr in QGuiApplication.screens():
             g = scr.geometry()
             self.screen.addItem(f"{scr.name()}  ({g.width()}x{g.height()})", scr.name())
-        self.screen.setCurrentIndex(max(0, self.screen.findData(s.get("projector_screen"))))
+        idx = self.screen.findData(s.get("projector_screen", ""))
+        self.screen.setCurrentIndex(max(0, idx))
         self.rot = QComboBox()
         self.rot.addItems(["0", "90", "180", "270"])
         self.rot.setCurrentText(str(s.get("projector_rotation", 0)))

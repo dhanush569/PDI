@@ -30,13 +30,34 @@ class ProjectorWindow(QWidget):
     def place(self) -> str:
         name = self.ctx.settings.get("projector_screen") or ""
         screens = QGuiApplication.screens()
-        scr = next((s for s in screens if s.name() == name), None)
-        if scr is None:
-            scr = screens[1] if len(screens) > 1 else screens[0]
-        self.setGeometry(scr.geometry())
-        if len(screens) > 1 or name:
-            self.showFullScreen()
-        return scr.name()
+        primary = QGuiApplication.primaryScreen()
+
+        target_scr = None
+        if name:
+            target_scr = next((s for s in screens if s.name() == name), None)
+
+        # If not explicitly found, select a secondary screen that is NOT the primary screen
+        if target_scr is None and len(screens) > 1:
+            target_scr = next((s for s in screens if s != primary), screens[1])
+
+        # If there is no dedicated external projector display (e.g. laptop or single monitor):
+        # NEVER open a full-screen black window covering the operator screen!
+        if target_scr is None or target_scr == primary:
+            self.hide()
+            return ""
+
+        self.setScreen(target_scr)
+        self.setGeometry(target_scr.geometry())
+        self.showFullScreen()
+        return target_scr.name()
+
+    def keyPressEvent(self, e):  # noqa: N802
+        if e.key() in (Qt.Key_Escape, Qt.Key_Q):
+            self.hide()
+        super().keyPressEvent(e)
+
+    def mouseDoubleClickEvent(self, e):  # noqa: N802
+        self.hide()
 
     def on_states(self, states: dict) -> None:
         self.states = states
