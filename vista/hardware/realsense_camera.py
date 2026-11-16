@@ -62,6 +62,7 @@ class RealSenseCamera(CameraBase):
         self._info: dict = {}
         self._seq = 0
         self._depth_sensor = None
+        self._consecutive_timeouts = 0
         self._opts = {"preset": "High density", "laser_power": 150.0, "auto_exposure": True,
                       "spatial": True, "temporal": True, "hole_filling": True}
 
@@ -77,30 +78,36 @@ class RealSenseCamera(CameraBase):
                               + ", ".join(d["serial"] for d in devices))
         if not any(m in dev["name"] for m in SUPPORTED_MODELS):
             log.warning("Camera model %s is not in the validated list %s", dev["name"], SUPPORTED_MODELS)
-        if dev["usb"] and dev["usb"].startswith("2"):
-            log.warning("RealSense enumerated as USB %s - use a USB 3 port/cable for full frame rate", dev["usb"])
+        is_usb2 = bool(dev["usb"] and dev["usb"].startswith("2"))
+        if is_usb2:
+            log.warning("RealSense enumerated as USB %s - adapting parameters for USB 2.x bandwidth stability", dev["usb"])
             if self.width == 848 and self.height == 480:
                 log.info("Adapting RealSense resolution to 640x480 for USB 2.x compatibility")
                 self.width, self.height = 640, 480
+            if self.fps > 15:
+                log.info("Capping RealSense FPS from %d to 15 for USB 2.x continuous stream stability", self.fps)
+                self.fps = 15
 
         def _make_config(w: int, h: int, fps: int):
             c = rs.config()
             c.enable_device(dev["serial"])
             c.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)
             c.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
-            c.enable_stream(rs.stream.infrared, 1, w, h, rs.format.y8, fps)
+            # On USB 2.0, omit infrared stream to conserve bus bandwidth and prevent packet drops
+            if not is_usb2:
+                c.enable_stream(rs.stream.infrared, 1, w, h, rs.format.y8, fps)
             return c
 
         pipe = rs.pipeline()
         try:
             profile = pipe.start(_make_config(self.width, self.height, self.fps))
         except RuntimeError as exc:
-            if self.width != 640 or self.height != 480:
-                log.warning("Could not start streams at %dx%d@%d (%s) - attempting 640x480 fallback",
+            if self.width != 640 or self.height != 480 or self.fps != 15:
+                log.warning("Could not start streams at %dx%d@%d (%s) - attempting 640x480@15 fallback",
                             self.width, self.height, self.fps, exc)
                 try:
-                    self.width, self.height = 640, 480
-                    profile = pipe.start(_make_config(640, 480, self.fps))
+                    self.width, self.height, self.fps = 640, 480, 15
+                    profile = pipe.start(_make_config(640, 480, 15))
                 except RuntimeError as exc2:
                     raise CameraError(f"Could not start RealSense streams: {exc2}") from exc2
             else:
@@ -114,11 +121,23 @@ class RealSenseCamera(CameraBase):
         self._intr = Intrinsics(vp.width, vp.height, vp.fx, vp.fy, vp.ppx, vp.ppy)
         self._info = {**dev, "resolution": f"{self.width}x{self.height}@{self.fps}"}
         self.name = f"{dev['name']} ({dev['serial']})"
+        self._consecutive_timeouts = 0
+
+        # Buffer frames in hardware driver to prevent frame dropping during UI load
+        try:
+            if self._depth_sensor.supports(rs.option.frames_queue_size):
+                self._depth_sensor.set_option(rs.option.frames_queue_size, 5)
+            color_sensor = profile.get_device().first_color_sensor()
+            if color_sensor and color_sensor.supports(rs.option.frames_queue_size):
+                color_sensor.set_option(rs.option.frames_queue_size, 5)
+        except Exception:
+            pass
+
         self._build_filters()
         for k, v in self._opts.items():
             self._apply_option(k, v)
         # let auto-exposure settle
-        for _ in range(10):
+        for _ in range(5):
             try:
                 pipe.wait_for_frames(2000)
             except RuntimeError:
@@ -176,9 +195,18 @@ class RealSenseCamera(CameraBase):
             raise CameraError("Camera not started")
         try:
             frames = self._pipe.wait_for_frames(timeout_ms)
+            self._consecutive_timeouts = 0
         except RuntimeError as exc:
-            raise CameraError(f"RealSense frame timeout: {exc}") from exc
-        ir_frame = frames.get_infrared_frame(1)
+            self._consecutive_timeouts += 1
+            if self._consecutive_timeouts >= 5:
+                raise CameraError(f"RealSense frame timeout (5 consecutive drops): {exc}") from exc
+            log.debug("RealSense soft frame drop (%d/5)", self._consecutive_timeouts)
+            return None
+        ir_frame = None
+        try:
+            ir_frame = frames.get_infrared_frame(1)
+        except Exception:
+            pass
         aligned = self._align.process(frames)
         depth = aligned.get_depth_frame()
         color = aligned.get_color_frame()
