@@ -120,22 +120,30 @@ class Calibration:
             H_vision2bench=None if d.get("H_vision2bench") is None else np.array(d["H_vision2bench"], float))
 
     # ------------------------------------------------------------------ geometry
-    def _rays(self):
-        i = self.intrinsics
+    def _rays(self, depth_shape: tuple[int, int] | None = None, intr: Intrinsics | None = None):
+        if intr is not None:
+            i = intr
+        else:
+            i = self.intrinsics
+            if depth_shape is not None and (depth_shape[0] != i.height or depth_shape[1] != i.width):
+                sx = depth_shape[1] / float(i.width)
+                sy = depth_shape[0] / float(i.height)
+                i = Intrinsics(depth_shape[1], depth_shape[0], i.fx * sx, i.fy * sy, i.cx * sx, i.cy * sy)
         uu, vv = np.meshgrid(np.arange(i.width, dtype=np.float32), np.arange(i.height, dtype=np.float32))
         return (uu - i.cx) / i.fx, (vv - i.cy) / i.fy
 
-    def height_map(self, depth_mm: np.ndarray) -> np.ndarray:
+    def height_map(self, depth_mm: np.ndarray, intrinsics: Intrinsics | None = None) -> np.ndarray:
         """Height above the bench (mm) for every pixel; NaN where depth is invalid."""
         if self._K is None or self._K.shape != depth_mm.shape:
-            rx, ry = self._rays()
+            rx, ry = self._rays(depth_shape=depth_mm.shape, intr=intrinsics)
             self._K = (self.n[0] * rx + self.n[1] * ry + self.n[2]).astype(np.float32)
         h = depth_mm * self._K + np.float32(self.d)
         h[depth_mm <= 0] = np.nan
         return h
 
-    def pixel_to_bench(self, u: float, v: float, height: float = 0.0) -> tuple[float, float]:
-        i = self.intrinsics
+    def pixel_to_bench(self, u: float, v: float, height: float = 0.0,
+                       intrinsics: Intrinsics | None = None) -> tuple[float, float]:
+        i = intrinsics or self.intrinsics
         r = np.array([(u - i.cx) / i.fx, (v - i.cy) / i.fy, 1.0])
         denom = self.n.dot(r)
         if abs(denom) < 1e-9:
@@ -144,9 +152,10 @@ class Calibration:
         p = t * r - self.origin
         return float(p.dot(self.ex)), float(p.dot(self.ey))
 
-    def bench_to_pixel(self, x: float, y: float, height: float = 0.0) -> tuple[float, float]:
+    def bench_to_pixel(self, x: float, y: float, height: float = 0.0,
+                       intrinsics: Intrinsics | None = None) -> tuple[float, float]:
         p = self.origin + x * self.ex + y * self.ey + height * self.n
-        i = self.intrinsics
+        i = intrinsics or self.intrinsics
         return float(i.fx * p[0] / p[2] + i.cx), float(i.fy * p[1] / p[2] + i.cy)
 
     def pixel_poly_to_bench(self, poly_px, height: float = 0.0) -> list[list[float]]:

@@ -20,9 +20,9 @@ def to_qimage(img: np.ndarray) -> QImage:
         if img.dtype != np.uint8:
             img = np.clip(img, 0, 255).astype(np.uint8)
         h, w = img.shape
-        return QImage(img.data, w, h, w, QImage.Format_Grayscale8).copy()
+        return QImage(img.data, w, h, img.strides[0], QImage.Format_Grayscale8).copy()
     h, w, _ = img.shape
-    return QImage(img.data, w, h, 3 * w, QImage.Format_BGR888).copy()
+    return QImage(img.data, w, h, img.strides[0], QImage.Format_BGR888).copy()
 
 
 def height_to_color(height_mm: np.ndarray, max_mm: float = 200.0) -> np.ndarray:
@@ -35,17 +35,25 @@ def height_to_color(height_mm: np.ndarray, max_mm: float = 200.0) -> np.ndarray:
 def frame_view(frame, stream: str):
     if frame is None:
         return None
-    if stream == "IR" and frame.ir is not None:
-        return frame.ir
-    if stream == "HEIGHT" and frame.height_mm is not None:
-        return height_to_color(frame.height_mm)
+    if stream == "IR":
+        if frame.ir is not None:
+            return frame.ir
+        return frame.color
+    if stream == "HEIGHT":
+        if frame.height_mm is not None:
+            return height_to_color(frame.height_mm)
+        stream = "DEPTH"
     if stream == "DEPTH" and frame.depth_mm is not None:
         d = frame.depth_mm
         valid = d[d > 0]
         if valid.size:
             lo, hi = np.percentile(valid, 2), np.percentile(valid, 98)
-            n = np.clip((d - lo) / max(1.0, hi - lo) * 255, 0, 255).astype(np.uint8)
-            return cv2.applyColorMap(255 - n, cv2.COLORMAP_TURBO)
+            rng = max(1.0, hi - lo)
+            n = np.clip((d - lo) / rng * 255, 0, 255).astype(np.uint8)
+            img = cv2.applyColorMap(255 - n, cv2.COLORMAP_TURBO)
+            img[d <= 0] = (30, 30, 30)
+            return img
+        return np.zeros((d.shape[0], d.shape[1], 3), dtype=np.uint8)
     if stream == "VISION" and frame.vision is not None:
         return frame.vision
     return frame.color

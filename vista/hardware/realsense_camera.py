@@ -88,30 +88,33 @@ class RealSenseCamera(CameraBase):
                 log.info("Capping RealSense FPS from %d to 15 for USB 2.x continuous stream stability", self.fps)
                 self.fps = 15
 
-        def _make_config(w: int, h: int, fps: int):
+        def _make_config(w: int, h: int, fps: int, enable_ir: bool = True):
             c = rs.config()
             c.enable_device(dev["serial"])
             c.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)
             c.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
-            # On USB 2.0, omit infrared stream to conserve bus bandwidth and prevent packet drops
-            if not is_usb2:
-                c.enable_stream(rs.stream.infrared, 1, w, h, rs.format.y8, fps)
+            if enable_ir:
+                try:
+                    c.enable_stream(rs.stream.infrared, 1, w, h, rs.format.y8, fps)
+                except Exception as ir_exc:
+                    log.warning("Could not enable infrared stream at %dx%d@%d: %s", w, h, fps, ir_exc)
             return c
 
         pipe = rs.pipeline()
         try:
-            profile = pipe.start(_make_config(self.width, self.height, self.fps))
+            profile = pipe.start(_make_config(self.width, self.height, self.fps, enable_ir=True))
         except RuntimeError as exc:
-            if self.width != 640 or self.height != 480 or self.fps != 15:
-                log.warning("Could not start streams at %dx%d@%d (%s) - attempting 640x480@15 fallback",
-                            self.width, self.height, self.fps, exc)
+            log.warning("Could not start streams at %dx%d@%d (%s) - attempting 640x480@15 fallback",
+                        self.width, self.height, self.fps, exc)
+            try:
+                self.width, self.height, self.fps = 640, 480, 15
+                profile = pipe.start(_make_config(640, 480, 15, enable_ir=True))
+            except RuntimeError as exc2:
+                log.warning("Could not start 640x480@15 with IR (%s) - attempting without IR", exc2)
                 try:
-                    self.width, self.height, self.fps = 640, 480, 15
-                    profile = pipe.start(_make_config(640, 480, 15))
-                except RuntimeError as exc2:
-                    raise CameraError(f"Could not start RealSense streams: {exc2}") from exc2
-            else:
-                raise CameraError(f"Could not start RealSense streams {self.width}x{self.height}@{self.fps}: {exc}") from exc
+                    profile = pipe.start(_make_config(640, 480, 15, enable_ir=False))
+                except RuntimeError as exc3:
+                    raise CameraError(f"Could not start RealSense streams: {exc3}") from exc3
 
         self._pipe = pipe
         self._depth_sensor = profile.get_device().first_depth_sensor()

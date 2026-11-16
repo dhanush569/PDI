@@ -79,7 +79,9 @@ def _crop(img: np.ndarray, roi) -> np.ndarray:
 def signal_image(frame, sensor: str) -> np.ndarray | None:
     if sensor == "IR":
         return None if frame.ir is None else frame.ir.astype(np.float32)
-    return frame.height_mm
+    if frame.height_mm is not None:
+        return frame.height_mm
+    return frame.depth_mm
 
 
 def median_stack(imgs: list[np.ndarray]) -> np.ndarray:

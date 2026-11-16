@@ -96,9 +96,11 @@ class CameraWorker(QThread):
             if frame is None:
                 continue
             cal = self.ctx.calibration
-            if cal is not None and frame.depth_mm is not None and frame.intrinsics is not None \
-                    and frame.depth_mm.shape == (cal.intrinsics.height, cal.intrinsics.width):
-                frame.height_mm = cal.height_map(frame.depth_mm)
+            if cal is not None and frame.depth_mm is not None:
+                try:
+                    frame.height_mm = cal.height_map(frame.depth_mm, frame.intrinsics)
+                except Exception as exc:
+                    log.debug("Height map calculation failed: %s", exc)
             if self.vision_cam is not None:
                 frame.vision = self.vision_cam.latest()
             states = self.ctx.engine.process(frame)
