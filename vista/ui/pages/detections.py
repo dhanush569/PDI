@@ -265,9 +265,196 @@ class TeachActivityDialog(Popup):
         try:
             model, arrays = teach_zone_baseline(self.roi, self.baseline_sig[0])
             self.ctx.store_teaching(self.det["id"], model, arrays)
+            self.timer.stop()
             self.accept()
         except Exception as exc:
             error(self, str(exc))
+
+    def closeEvent(self, ev) -> None:
+        self.timer.stop()
+        super().closeEvent(ev)
+
+    def reject(self) -> None:
+        self.timer.stop()
+        super().reject()
+
+
+class TeachObjectDialog(Popup):
+    """Arkite Guided Object Teaching Dialog.
+    Guides the user step-by-step:
+      Step 1: Capture empty zone snapshot (Without object)
+      Step 2: Capture object snapshot (With object)
+      Step 3: Verify and complete teaching.
+    """
+
+    def __init__(self, parent, page, det: dict, roi: list):
+        super().__init__(parent, f"Teach Object: {det['name']}",
+                         "Follow the steps below to capture without and with snapshots for teaching.",
+                         ico="cube", width=760)
+        self.page = page
+        self.det = det
+        self.roi = roi
+        self.ctx = page.ctx
+        self.caps = dict(page.caps)
+
+        self.cam_view = ImageView(placeholder="Streaming camera feed...")
+        self.cam_view.setMinimumSize(540, 260)
+        self.cam_view.set_edit_rect(roi, editable=False)
+        self.body.addWidget(self.cam_view)
+
+        # Snapshots row
+        cards_lay = QHBoxLayout()
+        cards_lay.setSpacing(12)
+
+        # Card A: Without
+        card_a = QFrame()
+        card_a.setStyleSheet(f"QFrame {{ background: white; border: 1px solid {C['line']}; border-radius: 4px; padding: 4px; }}")
+        la = QVBoxLayout(card_a)
+        la.setSpacing(4)
+        self.lbl_a_title = QLabel(f"<b>Step 1: Without {det['name']}</b>")
+        self.lbl_a_title.setAlignment(Qt.AlignCenter)
+        self.snap_a = QLabel("Empty zone not captured")
+        self.snap_a.setAlignment(Qt.AlignCenter)
+        self.snap_a.setMinimumHeight(100)
+        self.snap_a.setStyleSheet(f"border: 1px dashed {C['line']}; background: #F8F9FA; color: {C['faint']};")
+        self.btn_cap_a = button("1. Capture Without", "primary", self._capture_without, ico="camera")
+        la.addWidget(self.lbl_a_title)
+        la.addWidget(self.snap_a, 1)
+        la.addWidget(self.btn_cap_a)
+        cards_lay.addWidget(card_a, 1)
+
+        # Card B: With
+        card_b = QFrame()
+        card_b.setStyleSheet(f"QFrame {{ background: white; border: 1px solid {C['line']}; border-radius: 4px; padding: 4px; }}")
+        lb = QVBoxLayout(card_b)
+        lb.setSpacing(4)
+        self.lbl_b_title = QLabel(f"<b>Step 2: With {det['name']}</b>")
+        self.lbl_b_title.setAlignment(Qt.AlignCenter)
+        self.snap_b = QLabel("Object zone not captured")
+        self.snap_b.setAlignment(Qt.AlignCenter)
+        self.snap_b.setMinimumHeight(100)
+        self.snap_b.setStyleSheet(f"border: 1px dashed {C['line']}; background: #F8F9FA; color: {C['faint']};")
+        self.btn_cap_b = button("2. Capture With", None, self._capture_with, ico="camera")
+        lb.addWidget(self.lbl_b_title)
+        lb.addWidget(self.snap_b, 1)
+        lb.addWidget(self.btn_cap_b)
+        cards_lay.addWidget(card_b, 1)
+
+        self.body.addLayout(cards_lay)
+
+        self.status_lbl = label("Step 1: Remove the object from the working zone, then click '1. Capture Without'.", "Muted")
+        self.body.addWidget(self.status_lbl)
+
+        # Footer buttons
+        self.btn_cancel = button("Cancel", None, self.reject)
+        self.btn_ok = button("OK - Complete Teaching", "primary", self._finish, ico="check_circle")
+        self.btn_ok.setEnabled(False)
+
+        self.footer.addStretch(1)
+        self.footer.addWidget(self.btn_cancel)
+        self.footer.addWidget(self.btn_ok)
+
+        # Populate if already captured
+        self._refresh_snapshots()
+
+        # Project workspace live on physical table immediately
+        self._project_live_roi()
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(50)
+
+    def _project_live_roi(self) -> None:
+        cal = self.ctx.calibration
+        if cal is not None and self.roi:
+            try:
+                x, y, w, h = self.roi
+                corners_px = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+                poly_mm = cal.pixel_poly_to_bench(corners_px)
+                items = self.page._get_live_items()
+                self.page.main.projector.set_live_scene(items, highlight=self.det["id"],
+                                                        live_roi_poly=poly_mm, title=f"Teach: {self.det['name']}")
+            except Exception:
+                pass
+
+    def _refresh_snapshots(self) -> None:
+        sensor = self.page.mode_lbl.currentData() or self.det.get("sensor", "DEPTH")
+        x, y, w, h = [int(v) for v in self.roi]
+        if "without" in self.caps:
+            sig = self.caps["without"][0]
+            crop = np.nanmedian(np.stack(sig), axis=0)[y:y + h, x:x + w]
+            img = height_to_color(crop, 120) if sensor != "IR" else crop.astype(np.uint8)
+            pm = _pix(img, 240, 95)
+            if pm:
+                self.snap_a.setPixmap(pm)
+            self.lbl_a_title.setText(f"<b>Step 1: Without {self.det['name']}</b> <span style='color:{C['ok']};'>✔ Ready</span>")
+            self.btn_cap_a.setText("Recapture Without")
+
+        if "with" in self.caps:
+            sig = self.caps["with"][0]
+            crop = np.nanmedian(np.stack(sig), axis=0)[y:y + h, x:x + w]
+            img = height_to_color(crop, 120) if sensor != "IR" else crop.astype(np.uint8)
+            pm = _pix(img, 240, 95)
+            if pm:
+                self.snap_b.setPixmap(pm)
+            self.lbl_b_title.setText(f"<b>Step 2: With {self.det['name']}</b> <span style='color:{C['ok']};'>✔ Ready</span>")
+            self.btn_cap_b.setText("Recapture With")
+
+        if "without" in self.caps and "with" in self.caps:
+            self.status_lbl.setText("Both snapshots captured! Click 'OK - Complete Teaching' to finish.")
+            self.status_lbl.setStyleSheet(f"color: {C['ok']}; font-weight: bold;")
+            self.btn_ok.setEnabled(True)
+        elif "without" in self.caps:
+            self.status_lbl.setText("Step 1 done. Place the object inside the working zone and click '2. Capture With'.")
+            self.status_lbl.setStyleSheet("font-weight: bold;")
+            self.btn_cap_b.setStyleSheet(f"background: {C['primary']}; color: white; font-weight: bold;")
+
+    def _capture_without(self) -> None:
+        try:
+            sig, heights = self.page._signals()
+            self.caps["without"] = (sig, heights)
+            self._refresh_snapshots()
+        except Exception as exc:
+            error(self, str(exc))
+
+    def _capture_with(self) -> None:
+        try:
+            sig, heights = self.page._signals()
+            self.caps["with"] = (sig, heights)
+            self._refresh_snapshots()
+        except Exception as exc:
+            error(self, str(exc))
+
+    def _tick(self) -> None:
+        f = self.ctx.latest_frame()
+        if f is None:
+            return
+        img = frame_view(f, self.page.stream.currentText())
+        self.cam_view.set_image(img)
+
+    def _finish(self) -> None:
+        if "without" not in self.caps or "with" not in self.caps:
+            return error(self, "Please capture both snapshots first.")
+        try:
+            d = self.det
+            sensor = self.page.mode_lbl.currentData() or d["sensor"]
+            p = {**OBJECT_DEFAULTS, **d["params"]}
+            model, arrays = teach_object(self.roi, self.caps["without"][0], self.caps["with"][0], sensor,
+                                         self.page.tolerance.currentData(), self.caps["with"][1], p["min_diff"])
+            self.ctx.store_teaching(d["id"], model, arrays)
+            self.page.caps = self.caps
+            self.timer.stop()
+            self.accept()
+        except Exception as exc:
+            error(self, str(exc))
+
+    def closeEvent(self, ev) -> None:
+        self.timer.stop()
+        super().closeEvent(ev)
+
+    def reject(self) -> None:
+        self.timer.stop()
+        super().reject()
 
 
 class DetectionsPage(Page):
@@ -638,8 +825,11 @@ class DetectionsPage(Page):
             if "ref_without" in arr:
                 self.snap_a.set(_pix(height_to_color(arr["ref_without"], 120), 250, 118))
                 self.snap_b.set(_pix(height_to_color(arr["ref_with"], 120), 250, 118))
+                self.snap_a.title.setText(f"Without {d['name']} (Saved)")
+                self.snap_b.title.setText(f"With {d['name']} (Saved)")
             elif "baseline" in arr:
                 self.snap_a.set(_pix(height_to_color(arr["baseline"], 120), 250, 118))
+                self.snap_a.title.setText("Empty zone (Saved)")
 
     def _properties(self) -> None:
         p = self.props
@@ -862,7 +1052,28 @@ class DetectionsPage(Page):
     def _roi_changed(self, rect) -> None:
         if self.det is not None and self.editable():
             self.roi = rect
-            self.readout.setText(f"Working zone {rect} - capture and press Teach to apply")
+            self.caps.clear()
+            d = self.det
+            t = d["det_type"]
+            is_obj = t in ("OBJECT", "TOOL", "CADCAM")
+            if is_obj:
+                self.snap_a.title.setText(f"Without {d['name']}")
+                self.snap_a.set(None, "Zone updated.\nClick '1. Capture Without'")
+                self.snap_b.title.setText(f"With {d['name']}")
+                self.snap_b.set(None, "Click '2. Capture With'")
+                self.btn_a.setText("1. Capture Without")
+                self.btn_b.setText("2. Capture With")
+                self.btn_a.setStyleSheet("")
+                self.btn_b.setStyleSheet("")
+                self.readout.setText("Working zone updated. Step 1: Remove object and click '1. Capture Without'. Step 2: Place object and click '2. Capture With'.")
+            elif t in ("BUTTON", "PICKING_BIN"):
+                self.snap_a.title.setText("Empty zone")
+                self.snap_a.set(None, "Zone updated.\nClick 'Capture'")
+                self.btn_a.setText("Capture Empty Zone")
+                self.btn_a.setStyleSheet("")
+                self.readout.setText("Working zone updated. Keep zone empty and click 'Capture'.")
+            else:
+                self.readout.setText(f"Working zone {rect} - click Teach to configure")
             self._roi_dragging(rect)
 
     def _hover(self, x: float, y: float) -> None:
@@ -900,7 +1111,8 @@ class DetectionsPage(Page):
             return
         if not self.roi:
             return error(self, "Draw the working zone on the image first.")
-        kind = "baseline" if self.det["det_type"] in ("ACTIVITY", "BUTTON") else kind
+        d = self.det
+        kind = "baseline" if d["det_type"] in ("ACTIVITY", "BUTTON", "PICKING_BIN") else kind
         try:
             sig, heights = self._signals()
         except TeachError as exc:
@@ -909,7 +1121,22 @@ class DetectionsPage(Page):
         x, y, w, h = [int(v) for v in self.roi]
         crop = np.nanmedian(np.stack(sig), axis=0)[y:y + h, x:x + w]
         img = height_to_color(crop, 120) if self.mode_lbl.currentData() != "IR" else crop.astype(np.uint8)
-        (self.snap_b if kind == "with" else self.snap_a).set(_pix(img, 250, 118))
+        if kind == "with":
+            self.snap_b.set(_pix(img, 250, 118))
+            self.snap_b.title.setText(f"With {d['name']} (Ready)")
+            self.btn_b.setText("2. Recapture With")
+            self.btn_b.setStyleSheet(f"color: {C['ok']}; font-weight: bold;")
+        elif kind == "without":
+            self.snap_a.set(_pix(img, 250, 118))
+            self.snap_a.title.setText(f"Without {d['name']} (Ready)")
+            self.btn_a.setText("1. Recapture Without")
+            self.btn_a.setStyleSheet(f"color: {C['ok']}; font-weight: bold;")
+            self.btn_b.setStyleSheet(f"background: {C['primary']}; color: white; font-weight: bold;")
+        else:
+            self.snap_a.set(_pix(img, 250, 118))
+            self.snap_a.title.setText("Empty zone (Ready)")
+            self.btn_a.setText("Recapture Empty Zone")
+            self.btn_a.setStyleSheet(f"color: {C['ok']}; font-weight: bold;")
 
     def teach(self) -> None:
         if not self._can_teach():
@@ -924,7 +1151,12 @@ class DetectionsPage(Page):
                                                  d["params"])
             if d["det_type"] in ("OBJECT", "TOOL", "CADCAM"):
                 if "without" not in self.caps or "with" not in self.caps:
-                    raise TeachError("Capture both the 'without' and 'with' snapshots first.")
+                    dlg = TeachObjectDialog(self, self, d, self.roi)
+                    if dlg.exec() != QDialog.Accepted:
+                        return
+                    info(self, f"'{d['name']}' taught successfully. Test it now on Fine tune: the live state must follow reality.")
+                    self.reload()
+                    return
                 p = {**OBJECT_DEFAULTS, **d["params"]}
                 model, arrays = teach_object(self.roi, self.caps["without"][0], self.caps["with"][0], sensor,
                                              self.tolerance.currentData(), self.caps["with"][1], p["min_diff"])
@@ -938,7 +1170,12 @@ class DetectionsPage(Page):
                     self.reload()
                     return
                 if "baseline" not in self.caps:
-                    raise TeachError("Capture the empty zone first.")
+                    if confirm(self, f"Empty zone snapshot is needed to teach '{d['name']}'.\nEnsure the zone is empty and click OK to capture now."):
+                        self.capture("baseline")
+                        if "baseline" not in self.caps:
+                            return
+                    else:
+                        return
                 model, arrays = teach_zone_baseline(self.roi, self.caps["baseline"][0])
                 self.ctx.store_teaching(d["id"], model, arrays)
             else:
