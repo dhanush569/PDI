@@ -161,6 +161,9 @@ class Calibration:
     def pixel_poly_to_bench(self, poly_px, height: float = 0.0) -> list[list[float]]:
         return [list(self.pixel_to_bench(u, v, height)) for u, v in poly_px]
 
+    def camera_to_bench(self, pts, height: float = 0.0) -> np.ndarray:
+        return np.array(self.pixel_poly_to_bench(pts, height), dtype=float)
+
     def bench_to_proj(self, pts) -> np.ndarray:
         pts = np.asarray(pts, dtype=np.float64).reshape(-1, 1, 2)
         return cv2.perspectiveTransform(pts, self.H_bench2proj).reshape(-1, 2)

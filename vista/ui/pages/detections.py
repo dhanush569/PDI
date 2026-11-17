@@ -216,12 +216,15 @@ class TeachActivityDialog(Popup):
     def _project_live_roi(self) -> None:
         cal = self.ctx.calibration
         if cal is not None and self.roi:
-            x, y, w, h = self.roi
-            corners_px = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
-            poly_mm = cal.camera_to_bench(corners_px).tolist()
-            items = self.page._get_live_items()
-            self.page.main.projector.set_live_scene(items, highlight=self.det["id"],
-                                                    live_roi_poly=poly_mm, title=f"Perform Activity: {self.det['name']}")
+            try:
+                x, y, w, h = self.roi
+                corners_px = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+                poly_mm = cal.pixel_poly_to_bench(corners_px)
+                items = self.page._get_live_items()
+                self.page.main.projector.set_live_scene(items, highlight=self.det["id"],
+                                                        live_roi_poly=poly_mm, title=f"Perform Activity: {self.det['name']}")
+            except Exception:
+                pass
 
     def _capture_baseline(self) -> None:
         try:
@@ -1004,13 +1007,16 @@ class DetectionsPage(Page):
             return
         cal = self.ctx.calibration
         if cal is not None:
-            x, y, w, h = roi_px
-            corners_px = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
-            poly_mm = cal.camera_to_bench(corners_px).tolist()
-            items = self._get_live_items()
-            self.main.projector.set_live_scene(items, highlight=self.det["id"],
-                                               live_roi_poly=poly_mm,
-                                               title=f"Drawing Workspace: {self.det['name']}")
+            try:
+                x, y, w, h = roi_px
+                corners_px = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+                poly_mm = cal.pixel_poly_to_bench(corners_px)
+                items = self._get_live_items()
+                self.main.projector.set_live_scene(items, highlight=self.det["id"],
+                                                   live_roi_poly=poly_mm,
+                                                   title=f"Drawing Workspace: {self.det['name']}")
+            except Exception:
+                pass
 
     def _zone_moved(self, det_id: int, dx: float, dy: float) -> None:
         d = next((r for r in self.rows if r["id"] == det_id), None)
