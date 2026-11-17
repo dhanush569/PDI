@@ -122,10 +122,11 @@ class ObjectDetector:
         occluded = np.zeros_like(valid)
         if frame.height_mm is not None:
             h = _crop(frame.height_mm, self.roi)
-            top = self.h_with if self.h_with is not None else (self.ref_with if self.sensor == "DEPTH" else None)
-            if top is not None:
-                with np.errstate(invalid="ignore"):
-                    occluded = valid & (h > np.fmax(top, 0) + self.p["occlusion_mm"])
+            if h.shape == self.mask.shape:
+                top = self.h_with if self.h_with is not None else (self.ref_with if self.sensor == "DEPTH" else None)
+                if top is not None:
+                    with np.errstate(invalid="ignore"):
+                        occluded = valid & (h > np.fmax(top, 0) + self.p["occlusion_mm"])
         n_mask = max(1, int(self.mask.sum()))
         occl_ratio = float(occluded.sum()) / n_mask
         usable = valid & ~occluded

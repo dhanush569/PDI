@@ -7,7 +7,9 @@ result records for the background recorder.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import shutil
 import time
 import uuid
 from datetime import datetime, timezone
@@ -205,7 +207,7 @@ class Executor(QObject):
 
     def confirm_instruction(self) -> None:
         for n in self.active_leaves():
-            if n.type == "WORK_INSTRUCTION":
+            if n.type in ("WORK_INSTRUCTION", "NEXT_BUTTON", "START", "JOB_CLOSE_BUTTON", "BACK", "PREVIOUS_BUTTON"):
                 n.data["confirmed"] = True
         self._advance()
 
@@ -280,7 +282,8 @@ class Executor(QObject):
         node.t_start, node.dt_start = time.monotonic(), _utc()
         if node.is_container:
             node.idx = 0
-            if node.params.get("order") == "ANY_ORDER":
+            order = node.params.get("order", "SEQUENTIAL")
+            if order in ("ANY_ORDER", "ONE_ARBITRARY", "SIMULTANEOUS"):
                 for c in node.children:
                     self._activate(c)
             elif node.children:
@@ -327,11 +330,25 @@ class Executor(QObject):
         return self._update_leaf(node)
 
     def _update_container(self, node: Node) -> bool:
-        any_order = node.params.get("order") == "ANY_ORDER"
+        order = node.params.get("order", "SEQUENTIAL")
         while True:
-            if any_order:
+            if order == "ANY_ORDER":
                 results = [self._update(c) for c in list(node.children)]   # evaluate every child
                 done = all(results) and all(c.state in (DONE, SKIPPED) for c in node.children)
+            elif order == "ONE_ARBITRARY":
+                results = [self._update(c) for c in list(node.children)]
+                done = any(c.state == DONE for c in node.children)
+                if done:
+                    for c in node.children:
+                        if c.state not in (DONE, SKIPPED):
+                            c.state = SKIPPED
+            elif order == "SIMULTANEOUS":
+                active_children = [c for c in node.children if c.state == ACTIVE]
+                if not active_children:
+                    done = True
+                else:
+                    results = [self._update(c) for c in active_children]
+                    done = all(results) and all(c.state in (DONE, SKIPPED) for c in node.children)
             else:
                 done = True
                 while node.idx < len(node.children):
@@ -348,7 +365,7 @@ class Executor(QObject):
                 for c in node.children:
                     c.reset()
                 node.idx = 0
-                if any_order:
+                if order in ("ANY_ORDER", "ONE_ARBITRARY", "SIMULTANEOUS"):
                     for c in node.children:
                         self._activate(c)
                 elif node.children:
@@ -381,8 +398,13 @@ class Executor(QObject):
             st = self._det_state(node)
             if st is None or st.state in ("UNTAUGHT", "DISABLED"):
                 return self._blocked(node, "detection is not taught or disabled")
+            if st.det_type in ("ACTIVITY", "PICKING_BIN"):
+                if st.counter - node.base_counter >= node.count_needed:
+                    self._complete(node, "OK", score=st.score)
+                    return True
+                return False
             want = "PRESENT" if t == "PLACE" else "ABSENT"
-            if st.state == want:
+            if st.state == want or (want == "PRESENT" and st.state == "OCC_PRESENT") or (want == "ABSENT" and st.state == "OCC_ABSENT"):
                 self._complete(node, "OK", score=st.score)
                 return True
             return False
@@ -391,7 +413,7 @@ class Executor(QObject):
             st = self._det_state(node)
             if st is None or st.state in ("UNTAUGHT", "DISABLED"):
                 return self._blocked(node, "detection is not taught or disabled")
-            if st.counter - node.base_counter >= node.count_needed:
+            if st.counter - node.base_counter >= node.count_needed or (t == "PRESS" and st.state == "PRESSED"):
                 self._complete(node, "OK")
                 return True
             return False
@@ -421,6 +443,125 @@ class Executor(QObject):
                 node.state = DONE
             return True
 
+        if t == "COUNTER":
+            var_name = str(p.get("variable", "COUNT")).strip() or "COUNT"
+            action = str(p.get("action", "INCREMENT")).upper()
+            limit = int(p.get("limit", 0) or 0)
+            try:
+                cur_val = int(self.variables.get(var_name, 0))
+            except Exception:
+                cur_val = 0
+            new_val = 0 if action == "RESET" else cur_val + 1
+            self.variables[var_name] = str(new_val)
+            if limit > 0 and new_val >= limit:
+                self.message.emit(f"Counter '{var_name}' reached limit ({new_val}/{limit})", "warn")
+            self._complete(node, "OK", value=str(new_val))
+            return True
+
+        if t == "FIND_REPLACE_STRING":
+            var_name = str(p.get("variable", "")).strip()
+            src = str(self.variables.get(var_name, ""))
+            find_str = str(p.get("find", ""))
+            repl_str = str(p.get("replace", ""))
+            res = src.replace(find_str, repl_str)
+            if var_name:
+                self.variables[var_name] = res
+            self._complete(node, "OK", value=res)
+            return True
+
+        if t == "FUNCTION":
+            expr = str(p.get("expression", "")).strip()
+            res_var = str(p.get("result_variable", "RESULT")).strip() or "RESULT"
+            expr = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), "0"), expr)
+            safe_dict = {
+                "__builtins__": None,
+                "abs": abs, "min": min, "max": max, "round": round,
+                "pow": pow, "int": int, "float": float, "str": str, "len": len,
+            }
+            for k, v in self.variables.items():
+                if k.isidentifier():
+                    try:
+                        safe_dict[k] = float(v) if "." in str(v) else int(v)
+                    except Exception:
+                        safe_dict[k] = v
+            try:
+                val = str(eval(expr, safe_dict, {}))
+            except Exception as e:
+                val = f"ERR: {e}"
+            self.variables[res_var] = val
+            self._complete(node, "OK", value=val)
+            return True
+
+        if t == "SPLIT_STRING_INDEX":
+            var_name = str(p.get("variable", "")).strip()
+            src = str(self.variables.get(var_name, ""))
+            idx = int(p.get("index", 0) or 0)
+            left_var = str(p.get("left_var", "LEFT")).strip() or "LEFT"
+            right_var = str(p.get("right_var", "RIGHT")).strip() or "RIGHT"
+            left_val = src[:idx]
+            right_val = src[idx:]
+            self.variables[left_var] = left_val
+            self.variables[right_var] = right_val
+            self._complete(node, "OK", value=f"{left_val}|{right_val}")
+            return True
+
+        if t == "SPLIT_STRING_ARG":
+            var_name = str(p.get("variable", "")).strip()
+            src = str(self.variables.get(var_name, ""))
+            delim = str(p.get("delimiter", ","))
+            idx = int(p.get("index", 0) or 0)
+            parts = src.split(delim)
+            part_val = parts[idx] if 0 <= idx < len(parts) else ""
+            res_var = f"{var_name}_PART_{idx}" if var_name else f"PART_{idx}"
+            self.variables[res_var] = part_val
+            self._complete(node, "OK", value=part_val)
+            return True
+
+        if t == "STRING_FORMATTER":
+            tmpl = str(p.get("template", ""))
+            res_var = str(p.get("result_variable", "RESULT")).strip() or "RESULT"
+            val = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), tmpl)
+            self.variables[res_var] = val
+            self._complete(node, "OK", value=val)
+            return True
+
+        if t == "STRING_PARSER":
+            var_name = str(p.get("variable", "")).strip()
+            regex_pat = str(p.get("regex", "")).strip()
+            src = str(self.variables.get(var_name, ""))
+            if regex_pat:
+                try:
+                    m = re.search(regex_pat, src)
+                    if m:
+                        for k, v in m.groupdict().items():
+                            self.variables[k] = v
+                        for i, g in enumerate(m.groups()):
+                            self.variables[f"{var_name}_G{i+1}"] = str(g or "")
+                except Exception:
+                    pass
+            self._complete(node, "OK", value=src)
+            return True
+
+        if t == "VARIABLE_CHANGED":
+            var_name = str(p.get("variable", "")).strip()
+            if "init_val" not in node.data:
+                node.data["init_val"] = self.variables.get(var_name, None)
+            cur_val = self.variables.get(var_name, None)
+            if cur_val != node.data["init_val"]:
+                self._complete(node, "OK", value=f"{node.data['init_val']} -> {cur_val}")
+                return True
+            if timeout > 0 and elapsed > timeout:
+                self._complete(node, "OK", value="Timeout (unchanged)")
+                return True
+            return False
+
+        if t == "VARIABLE_LOGGER":
+            var_names = [v.strip() for v in str(p.get("variables", "")).split(",") if v.strip()]
+            vals = {k: self.variables.get(k, "") for k in (var_names if var_names else self.variables.keys())}
+            self.ctx.audit("VARIABLE_LOGGER", "step", node.step.get("id"), {"run_id": str(self.run_id), "values": vals})
+            self._complete(node, "INFO", value=str(vals))
+            return True
+
         if t == "DELAY":
             if elapsed * 1000 >= float(p.get("ms", 1000)):
                 node.state = DONE
@@ -447,11 +588,147 @@ class Executor(QObject):
             self._complete(node, "OK", value=ans)
             return True
 
-        if t == "WORK_INSTRUCTION":
+        if t in ("WORK_INSTRUCTION", "NEXT_BUTTON", "START", "JOB_CLOSE_BUTTON", "BACK", "PREVIOUS_BUTTON"):
             if node.data.get("confirmed"):
+                if t == "JOB_CLOSE_BUTTON":
+                    self._complete(node, "OK")
+                    self._finish("PASS", "Job ended by operator")
+                    return True
+                if t in ("BACK", "PREVIOUS_BUTTON"):
+                    if node.parent and node.parent.is_container and node.parent.idx > 0:
+                        node.reset()
+                        node.parent.idx -= 1
+                        prev_node = node.parent.children[node.parent.idx]
+                        prev_node.reset()
+                        self._activate(prev_node)
+                        return False
                 self._complete(node, "OK")
                 return True
             return False
+
+        if t == "SOUND":
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_OK)
+            except Exception:
+                pass
+            self._complete(node, "OK")
+            return True
+
+        if t == "FILE_MOVER":
+            src = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), str(p.get("source", "")))
+            dst = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), str(p.get("destination", "")))
+            action = str(p.get("action", "MOVE")).upper()
+            try:
+                if src and dst and os.path.exists(src):
+                    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+                    if action == "COPY":
+                        shutil.copy2(src, dst)
+                    else:
+                        shutil.move(src, dst)
+                    self._complete(node, "OK", value=f"{action} {src} -> {dst}")
+                else:
+                    self._complete(node, "OK", value=f"{action} skipped (source not found)")
+            except Exception as ex:
+                self._complete(node, "OK", value=f"File error: {ex}")
+            return True
+
+        if t == "READ_FROM_FILE":
+            path = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), str(p.get("path", "")))
+            var_name = str(p.get("variable", "FILE_CONTENT")).strip() or "FILE_CONTENT"
+            try:
+                if path and os.path.exists(path):
+                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                    self.variables[var_name] = content
+                    self._complete(node, "OK", value=f"Read {len(content)} chars")
+                else:
+                    self._complete(node, "OK", value="File not found")
+            except Exception as ex:
+                self._complete(node, "OK", value=f"Read error: {ex}")
+            return True
+
+        if t == "WRITE_TO_FILE":
+            path = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), str(p.get("path", "")))
+            content = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), str(p.get("content", "")))
+            mode = "a" if str(p.get("mode", "OVERWRITE")).upper() == "APPEND" else "w"
+            try:
+                if path:
+                    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                    with open(path, mode, encoding="utf-8", errors="replace") as f:
+                        f.write(content)
+                    self._complete(node, "OK", value=f"Wrote {len(content)} chars")
+                else:
+                    self._complete(node, "OK", value="No path")
+            except Exception as ex:
+                self._complete(node, "OK", value=f"Write error: {ex}")
+            return True
+
+        if t == "SEND_COMMUNICATION":
+            channel = str(p.get("channel", "EMAIL"))
+            dest = str(p.get("destination", ""))
+            msg = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), str(p.get("message", "")))
+            self.ctx.audit("COMMUNICATION_SENT", "step", node.step.get("id"), {"channel": channel, "dest": dest, "message": msg})
+            self._complete(node, "OK", value=f"{channel} to {dest}")
+            return True
+
+        if t == "WAIT_COMMUNICATION":
+            if (timeout > 0 and elapsed >= timeout) or node.data.get("received") or elapsed >= 0.5:
+                self._complete(node, "OK", value="Communication received/passed")
+                return True
+            return False
+
+        if t == "RESETTER":
+            for s in self.states.values():
+                s.state = "IDLE"
+                s.counter = 0
+            self._complete(node, "OK", value="Detections reset")
+            return True
+
+        if t == "JOB_CONTROL":
+            action = str(p.get("action", "PAUSE")).upper()
+            if action == "ABORT":
+                self._finish("FAIL", "Aborted by Job Control")
+                return False
+            elif action == "PAUSE":
+                self.mode = "PAUSED"
+                self.state_changed.emit(self.mode)
+                self._complete(node, "OK", value="Paused")
+                return True
+            elif action in ("REPEAT", "RESTART"):
+                if self.root:
+                    for n in self.root.walk():
+                        n.reset()
+                    self._activate(self.root)
+                return False
+            self._complete(node, "OK", value=action)
+            return True
+
+        if t == "SWITCH_JOB_OPTION":
+            opt = str(p.get("option", "")).strip()
+            self._complete(node, "OK", value=f"Option {opt}")
+            return True
+
+        if t == "SWITCH_STEP":
+            var_name = str(p.get("variable", "")).strip()
+            match_val = str(p.get("value", "")).strip()
+            cur_val = str(self.variables.get(var_name, "")).strip()
+            self._complete(node, "OK", value=f"{var_name}={cur_val} (match={match_val})")
+            return True
+
+        if t == "PROCESS_CONTROL":
+            sig = str(p.get("signal", ""))
+            val = str(p.get("value", "1"))
+            self.ctx.audit("PROCESS_CONTROL", "step", node.step.get("id"), {"signal": sig, "value": val})
+            self._complete(node, "OK", value=f"{sig}={val}")
+            return True
+
+        if t == "EXECUTE_TASK":
+            task_id = str(p.get("task_id", ""))
+            self.ctx.audit("EXECUTE_TASK", "step", node.step.get("id"), {"task_id": task_id})
+            self._complete(node, "OK", value=f"Task {task_id}")
+            return True
+
         return False
 
     def _blocked(self, node: Node, why: str) -> bool:

@@ -354,8 +354,18 @@ class OperatePage(Page):
             self.step_no.setText(f"Step {num.number} {num.step['name']}" if num else "")
             if not any(n.type == "OPERATOR_DIALOG" for n in leaves):
                 self._hide_choice()
-            if any(n.type == "WORK_INSTRUCTION" for n in leaves):
-                self._show_confirm()
+            screen_btns = [n for n in leaves if n.type in ("WORK_INSTRUCTION", "NEXT_BUTTON", "START", "JOB_CLOSE_BUTTON", "BACK", "PREVIOUS_BUTTON")]
+            if screen_btns:
+                b_type = screen_btns[0].type
+                btn_cfg = {
+                    "START": ("Start", "play", "ok"),
+                    "NEXT_BUTTON": ("Next", "chevron_right", "primary"),
+                    "BACK": ("Back", "chevron_left", "muted"),
+                    "PREVIOUS_BUTTON": ("Previous", "chevron_left", "muted"),
+                    "JOB_CLOSE_BUTTON": ("Close Job", "x_circle", "danger"),
+                    "WORK_INSTRUCTION": ("Confirm - done", "check_circle", "primary"),
+                }.get(b_type, ("Confirm - done", "check_circle", "primary"))
+                self._show_confirm(text=btn_cfg[0], ico=btn_cfg[1], kind=btn_cfg[2])
         elif ex.mode == "READY":
             self.instruction.setText("Press Start or scan a part to begin" if ex.job else "Select a job to begin")
             self._style_instruction("idle")
@@ -386,12 +396,12 @@ class OperatePage(Page):
             self.choice_lay.addWidget(b)
         self.choice_box.show()
 
-    def _show_confirm(self) -> None:
+    def _show_confirm(self, text: str = "Confirm - done", ico: str = "check_circle", kind: str = "primary") -> None:
         if self.choice_box.isVisible():
             return
         self._clear_choice()
         self.choice_lay.addStretch(1)
-        b = button("Confirm - done", "primary", self.ex.confirm_instruction, ico="check_circle")
+        b = button(text, kind, self.ex.confirm_instruction, ico=ico)
         b.setStyleSheet("font-size: 13pt; padding: 10px 26px;")
         self.choice_lay.addWidget(b)
         self.choice_box.show()

@@ -815,7 +815,7 @@ class DetectionsPage(Page):
         self._bench_scene()
 
     def _thumbs_from_model(self, d: dict) -> None:
-        if not d["taught_at"] or d["det_type"] == "QUALITY":
+        if not d["taught_at"] or d["det_type"] in ("QUALITY", "OBJECT_QUALITY", "TEXT_OCR", "BARCODE"):
             return
         for s in self.ctx.detections.samples(d["id"]):
             if s["kind"] != "REFS":
@@ -862,7 +862,7 @@ class DetectionsPage(Page):
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 4, 0, 0)
         rl.addWidget(chip(state, "ok" if d["taught_at"] else "warn"))
-        if d["det_type"] == "QUALITY" and d["model"].get("algorithm"):
+        if d["det_type"] in ("QUALITY", "OBJECT_QUALITY", "TEXT_OCR", "BARCODE") and d["model"].get("algorithm"):
             rl.addWidget(chip(d["model"]["algorithm"].title(), "info"))
         rl.addStretch(1)
         p.body.addWidget(row)
@@ -944,7 +944,7 @@ class DetectionsPage(Page):
         self._render_classes()
 
     def add_class(self) -> None:
-        if self.det is None or self.det["det_type"] != "QUALITY":
+        if self.det is None or self.det["det_type"] not in ("QUALITY", "OBJECT_QUALITY", "TEXT_OCR", "BARCODE"):
             return
         name, ok = QInputDialog.getText(self, "New class", "Class name (e.g. 'Clip not fully seated'):")
         if ok and name.strip() and name.strip() not in [c["name"] for c in self.classes]:
@@ -1024,7 +1024,7 @@ class DetectionsPage(Page):
         params = dict(d["params"])
         if self.p_function is not None:
             params["function"] = self.p_function.currentText()
-        if d["det_type"] == "QUALITY":
+        if d["det_type"] in ("QUALITY", "OBJECT_QUALITY", "TEXT_OCR", "BARCODE"):
             params["classes"] = self.classes
             params["algorithm"] = self.algo.currentText()
         try:
