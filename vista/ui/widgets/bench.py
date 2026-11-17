@@ -13,6 +13,7 @@ from vista.ui.theme import C
 class BenchCanvas(QWidget):
     zone_clicked = Signal(int)
     zone_moved = Signal(int, float, float)        # det_id, dx_mm, dy_mm (total offset)
+    zone_dragging = Signal(int, float, float)     # det_id, dx_mm, dy_mm (real-time during drag)
 
     def __init__(self, ctx):
         super().__init__()
@@ -164,6 +165,7 @@ class BenchCanvas(QWidget):
             x, y = self.to_mm(e.position())
             it["offset"] = (round(off0[0] + x - start[0]), round(off0[1] + y - start[1]))
             self.update()
+            self.zone_dragging.emit(it["id"], float(it["offset"][0]), float(it["offset"][1]))
             return
         self.setCursor(Qt.PointingHandCursor if self._hit(e.position()) else Qt.ArrowCursor)
 

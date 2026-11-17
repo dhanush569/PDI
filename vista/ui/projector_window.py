@@ -22,9 +22,26 @@ class ProjectorWindow(QWidget):
         self.marker_radius = 22
         self.highlight: int | None = None
         self.states: dict = {}
+        self.live_items: list[dict] = []
+        self.live_roi_poly: list | None = None
+        self.live_title: str | None = None
         self._t = QTimer(self)
         self._t.timeout.connect(self.update)
         self._t.start(66)
+
+    def set_live_scene(self, items: list[dict], highlight: int | None = None,
+                       live_roi_poly=None, title: str | None = None) -> None:
+        self.live_items = list(items)
+        self.highlight = highlight
+        self.live_roi_poly = live_roi_poly
+        self.live_title = title
+        self.update()
+
+    def clear_live_scene(self) -> None:
+        self.live_items = []
+        self.live_roi_poly = None
+        self.live_title = None
+        self.update()
 
     # ------------------------------------------------------------------ placement
     def place(self) -> str:
@@ -118,7 +135,52 @@ class ProjectorWindow(QWidget):
         if self.mode == "TEST":
             self._all_zones(p, faint=False)
             return
+        if self.live_items or self.live_roi_poly is not None:
+            self._draw_live_scene(p)
+            return
         self._run(p)
+
+    def _draw_live_scene(self, p: QPainter) -> None:
+        for it in self.live_items:
+            sel = (it["id"] == self.highlight)
+            off = it.get("offset") or (0, 0)
+            poly_mm = [[x + off[0], y + off[1]] for x, y in it["poly"]]
+            color = "#2B66D9" if sel else it.get("color", "#F2E600")
+            fill = 0.35 if sel else it.get("fill", 0.15)
+            lbl = it.get("label", "")
+            st = self.states.get(it["id"])
+            if st:
+                if st.state in ("PRESENT", "OK", "ACTIVE", "PRESSED"):
+                    color = "#2FB670"
+                    fill = 0.45
+                elif st.state in ("NG", "MISSING"):
+                    color = "#E5484D"
+                    fill = 0.45
+            self._draw_zone_poly(p, poly_mm, color, fill, lbl, 5 if sel else 2)
+
+        if self.live_roi_poly:
+            self._draw_zone_poly(p, self.live_roi_poly, "#FFFFFF", 0.3, "Zone", 3)
+
+        if self.live_title:
+            p.setPen(QColor("#FFFFFF"))
+            p.setFont(self._font(0.035, bold=True))
+            p.drawText(QRectF(40, 40, self.width() - 80, 60), Qt.AlignLeft, self.live_title)
+
+    def _draw_zone_poly(self, p: QPainter, poly_mm, color: str, fill: float, text: str | None, width: int = 4) -> None:
+        poly = self._mm_poly(poly_mm) if poly_mm else None
+        if poly is None:
+            return
+        c = QColor(color)
+        p.setPen(QPen(c, width))
+        fc = QColor(c)
+        fc.setAlpha(int(255 * fill))
+        p.setBrush(fc if fill > 0 else Qt.NoBrush)
+        p.drawPolygon(poly)
+        if text:
+            p.setFont(self._font(0.024))
+            br = poly.boundingRect()
+            p.setPen(c)
+            p.drawText(QRectF(br.left() - 150, br.bottom() + 6, br.width() + 300, 40), Qt.AlignHCenter, text)
 
     def _font(self, rel: float, bold: bool = False) -> QFont:
         f = QFont(DISPLAY)

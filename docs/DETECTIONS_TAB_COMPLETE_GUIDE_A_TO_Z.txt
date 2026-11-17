@@ -1,0 +1,431 @@
+================================================================================
+RANE VISTA & ARKITE HIM — COMPLETE DETECTIONS TAB GUIDE (A TO Z)
+================================================================================
+Document: Complete Specification of Detection Types, Teaching Protocols,
+          Finetuning Parameters, and Vision Verification Algorithms
+Author: RANE VISTA Development Team
+Station: Rack & Pinion PDI Assembly & Quality Inspection Station
+Date: 2026-11-16
+================================================================================
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. OVERVIEW & PURPOSE OF THE DETECTIONS TAB
+2. WORKSPACE LAYOUT & TOOLBAR CONTROLS (A TO Z)
+3. COMPLETE DETECTION TYPES CATALOG (ALL 11 ITEMS FROM THE MENU):
+   - 3.1 Object (Ctrl+Shift+O)
+   - 3.2 Object with Quality Check (Ctrl+Shift+K)
+   - 3.3 Tool (Ctrl+Shift+T)
+   - 3.4 Picking Bin (Ctrl+Shift+P)
+   - 3.5 Virtual Button (Ctrl+Shift+B)
+   - 3.6 Activity (Ctrl+Shift+A)
+   - 3.7 Quality Check (Ctrl+Shift+Q)
+   - 3.8 Text (OCR) (Ctrl+Shift+X)
+   - 3.9 Barcode (QR/DM) (Ctrl+Shift+C)
+   - 3.10 Group
+   - 3.11 CAD/CAM Detection
+4. DETECTION SCOPE: PROJECT-WIDE VS. JOB-SPECIFIC
+5. SENSOR STREAMS & SENSOR VIEW MODES
+6. STEP-BY-STEP TEACHING PROTOCOLS (A TO Z)
+   - 6.1 Standard Static Objects & Picking Bins ("With" / "Without")
+   - 6.2 Activities (Hand Motions / Insertions)
+   - 6.3 Quality Checks & Multi-Class Classification (Correct / Wrong / Missing)
+   - 6.4 Optical Text (OCR) and Barcode Verification
+7. ADVANCED BOX FINETUNING & ALGORITHMIC PARAMETERS
+   - 7.1 Z-Coordinates (Base Z & Height)
+   - 7.2 Detection Modes & Image Processing
+   - 7.3 Fill Rates & Similarity Thresholds
+   - 7.4 Debounce Timing (Time to ON / Time to OFF)
+   - 7.5 Occlusion Checking & Anti-Shadow Protection
+8. VISION TOLERANCES, ROTATION & VARIABLE OVERRULING
+9. HARDWARE INTEGRATION (SMART TOOLS, DMX PICK-TO-LIGHT, PLC TRIGGERS)
+10. PRACTICAL WORKFLOW: LINKING DETECTIONS TO THE STEPS TAB
+
+
+================================================================================
+1. OVERVIEW & PURPOSE OF THE DETECTIONS TAB
+================================================================================
+The "Detections" tab is the spatial and optical intelligence engine of the
+workstation. In this tab, you define, teach, and calibrate every virtual sensor
+that monitors physical actions on the workbench.
+
+A "Detection" represents a monitored 3D volume or 2D camera inspection zone:
+  • Physical Part Presence: Knowing when a gear, casting, or seal is placed or removed.
+  • Material Picking: Verifying an operator's hand reaches into the right bin.
+  • Tool Tracking: Ensuring electric screwdrivers or torque wrenches are picked up and holstered.
+  • Quality Verification: Verifying correct component orientation, clip seating,
+    depth, color class, barcode readability, or stamped text.
+  • Virtual Touch Buttons: Projected interaction areas on the tabletop.
+
+Detections are completely decoupled from sequential logic: you create and teach
+them once here in the Detections tab, and then reference them across multiple
+assembly steps in the Steps tab.
+
+
+================================================================================
+2. WORKSPACE LAYOUT & TOOLBAR CONTROLS (A TO Z)
+================================================================================
+The Detections tab is organized into three major sections:
+
+```
+[Jobs] [Steps] [Detections] [Processes] [Connectivity]
+-------------------------------------------------------------------------------------------------------
+[+ New ▼]  [Indent] [Outdent] | [Search Detections] [▲][▼] | [Expand] [Collapse] | [Teach] [Finetune]
+-------------------------------------------------------------------------------------------------------
+Detection Tree Pane (Left)          | Live Sensor & Camera Viewport (Center)     | Properties Panel (Right)
+  ├── Project-Wide Detections       |   • 3D Point Cloud / Height Map            |   • Algorithmic settings
+  └── Job-Specific Detections       |   • Color RGB / IR Reflection Feed         |   • Tolerance thresholds
+                                    |   • Dynamic Bounding Box & Polygon editor  |   • Hardware / DMX links
+```
+
+Toolbar Controls:
+• [+ New ▼]: Opens the creation menu listing all 11 detection types with hotkeys.
+• [Indent (->) / Outdent (<-)]: Organizes detections into logical folders/groups.
+• [Search Detections]: Quick text filter to locate detections in large projects.
+• [Expand All / Collapse All]: Unfolds groups or collapses the detection tree.
+• [Sub-Tabs]:
+    1. Overview / Properties: General settings, names, and hardware mappings.
+    2. Teaching: Capturing snapshots, selecting baseline models, and training.
+    3. Finetune: Modifying 3D bounding geometry, base height, debounce, and thresholds.
+    4. Live Testing: Real-time visual feedback showing live score, fill rate, and state.
+
+
+================================================================================
+3. COMPLETE DETECTION TYPES CATALOG (ALL 11 MENU ITEMS)
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 OBJECT (Shortcut: Ctrl + Shift + O)
+--------------------------------------------------------------------------------
+• Description: Monitors the physical presence or absence of a component, workpiece,
+  fixture, or subassembly on the workbench.
+• Detection Technology: 3D Depth Height Mapping and/or Infrared (IR) reflection.
+• Actions Available in Steps Tab:
+    - Place: Step completes when the object is detected inside the zone.
+    - Take: Step completes when the object is removed from the zone.
+• Typical Use Cases:
+    - Verifying main rack housing placement into the fixture.
+    - Detecting placement of pinion shaft, ball bearings, or end-caps.
+
+--------------------------------------------------------------------------------
+3.2 OBJECT WITH QUALITY CHECK (Shortcut: Ctrl + Shift + K)
+--------------------------------------------------------------------------------
+• Description: Combined two-in-one detection. First verifies that the physical part
+  is present in the zone (using 3D Depth), and immediately inspects its visual
+  state (using high-resolution 2D color/texture algorithms).
+• Classification Classes:
+    - Expected Result (CORRECT): Part is present and properly assembled.
+    - Bad Result (WRONG): Part is present, but defect found (e.g., upside down,
+      wrong color clip, defective surface, misaligned latch).
+    - Missing (MISSING): Part is absent.
+• Advantage: Eliminates the need to create two separate detections for presence
+  and quality.
+
+--------------------------------------------------------------------------------
+3.3 TOOL (Shortcut: Ctrl + Shift + T)
+--------------------------------------------------------------------------------
+• Description: Tracks manual hand tools, smart DC electric screwdrivers, grease
+  nozzles, calipers, or alignment fixtures.
+• Operating Modes:
+    1. Standard Tool: Monitored via physical holster/cradle presence (using 3D/IR).
+    2. Dynamic Tool Tracking: Tracks tool position freely across the table using
+       the high-resolution vision camera.
+    3. Smart Tool (Open Protocol): Directly interfaces with smart controller
+       (Atlas Copco, Desoutter, Stanley, Bosch Rexroth) to read torque/angle data.
+• Actions Available in Steps Tab:
+    - Take Tool: Step passes when the operator picks up the tool.
+    - Place Tool: Step passes when the tool is returned to its home holder.
+
+--------------------------------------------------------------------------------
+3.4 PICKING BIN (Shortcut: Ctrl + Shift + P)
+--------------------------------------------------------------------------------
+• Description: Monitors a physical material container, bin opening, gravity feed
+  chute, or kitting tray on the table perimeter.
+• Detection Technology: Volumetric intrusion detection watching the bin opening.
+• Actions Available in Steps Tab:
+    - Pick: Detects the operator's hand breaking the plane of the bin to retrieve parts.
+    - Place Bin / Take Bin: Senses empty bin removal or full bin replenishment.
+• Material Linkage: Directly linked to items in the Materials database for automatic
+  bill-of-materials (BOM) quantity instruction display (e.g., "Pick 2x O-Rings").
+
+--------------------------------------------------------------------------------
+3.5 VIRTUAL BUTTON (Shortcut: Ctrl + Shift + B)
+--------------------------------------------------------------------------------
+• Description: A software-defined touch button projected directly onto the table
+  surface or fixture frame.
+• Trigger Mechanism: Triggers when the operator places a hand 30–80 mm above the
+  table over the projected icon, interrupting the sensor's baseline.
+• Benefits:
+    - Eliminates physical electrical pushbuttons, wiring, and wear-and-tear.
+    - Keeps the operator's hands close to the assembly zone for maximum ergonomics.
+    - Can be relocated dynamically in software when table fixtures change.
+
+--------------------------------------------------------------------------------
+3.6 ACTIVITY (Shortcut: Ctrl + Shift + A)
+--------------------------------------------------------------------------------
+• Description: Detects continuous dynamic human motions and multi-frame gestures
+  within a 3D volumetric space, rather than static object presence.
+• Trigger Mechanism: Evaluates dynamic pixel variance and motion trajectories over time.
+• Repetition Support: Can require a configurable count of repeated hand actions.
+• Typical Use Cases:
+    - Pressing an oil seal firmly into place with thumb or palm.
+    - Applying manual lubrication along a gear rack.
+    - Inserting a multi-pin wire harness until fully seated.
+    - Twisting or ratcheting an assembly lever.
+
+--------------------------------------------------------------------------------
+3.7 QUALITY CHECK (Shortcut: Ctrl + Shift + Q)
+--------------------------------------------------------------------------------
+• Description: Standalone optical inspection evaluating the quality state of a
+  feature that is already present.
+• Algorithms Supported:
+    - Shape-Based Matching: High-precision edge/contour correlation (independent of lighting).
+    - Texture-Based Matching: Surface texture and engraving verification.
+    - Color Histogram: Color distribution analysis (e.g., checking blue vs red seal).
+    - Height Map Comparison: 3D height-plane profile check (e.g., bolt protrusion height).
+• Rework Branching: In the Steps tab, automatically splits into:
+    - CORRECT: Advances to next operation.
+    - WRONG / MISSING: Triggers corrective rework steps and loops until cleared.
+
+--------------------------------------------------------------------------------
+3.8 TEXT (OCR) (Shortcut: Ctrl + Shift + X)
+--------------------------------------------------------------------------------
+• Description: Optical Character Recognition engine trained to read laser-etched,
+  inkjet-printed, or stamped alphanumeric characters.
+• Functionality:
+    - Extracts text strings and stores them in project variables.
+    - "Validate Text": Enforces regex expressions or prefix/suffix rules
+      (e.g., must match `^RP-[0-9]{6}$`).
+    - Tolerances: Configurable "Ignore Whitespace" and "Ignore Case" options.
+
+--------------------------------------------------------------------------------
+3.9 BARCODE (QR/DM) (Shortcut: Ctrl + Shift + C)
+--------------------------------------------------------------------------------
+• Description: Optical camera-based 1D and 2D barcode decoder.
+• Supported Symbologies:
+    - 2D: DataMatrix (ECC 200), QR Code.
+    - 1D: Code 128, Code 39, EAN-13, ITF-14.
+• Workflow:
+    - Decodes part labels directly via the overhead vision camera without requiring
+      a separate handheld handheld scanner gun.
+    - Decoded string is stored in a variable and used to select the active variant.
+
+--------------------------------------------------------------------------------
+3.10 GROUP
+--------------------------------------------------------------------------------
+• Description: Organizational folder inside the detection tree.
+• Purpose: Used to group related detections together (e.g., "Pinion_Subassembly_Detections",
+  "Hardware_Fastener_Bins", "Quality_Checkpoints"). Does not execute detection itself.
+
+--------------------------------------------------------------------------------
+3.11 CAD/CAM DETECTION
+--------------------------------------------------------------------------------
+• Description: Imports 3D CAD geometry (STEP, STL, OBJ) directly into the detection
+  engine.
+• Capabilities:
+    - Automatically derives the optimal 3D bounding box, inspection points, and
+      projection contour coordinates from the native 3D engineering model.
+    - Significantly accelerates teaching for complex curved castings.
+
+
+================================================================================
+4. DETECTION SCOPE: PROJECT-WIDE VS. JOB-SPECIFIC
+================================================================================
+When creating any detection, you must choose its scope:
+
+1. PROJECT-WIDE DETECTIONS
+   • Location: Saved in the `Project-Wide` root folder.
+   • Lifetime: Persists across ALL jobs and product models.
+   • Ideal for: Stationary bolt bins, fixed tool holsters, emergency virtual buttons,
+     permanent table clamps, and the main station barcode scanning zone.
+
+2. JOB-SPECIFIC DETECTIONS
+   • Location: Saved inside a specific Job's subfolder.
+   • Lifetime: Active ONLY when that specific product model/variant is running.
+   • Ideal for: Model-specific pinion shafts, variant-specific mounting brackets,
+     part-specific quality checks, and custom component fixtures.
+
+
+================================================================================
+5. SENSOR STREAMS & SENSOR VIEW MODES
+================================================================================
+In the central viewport, you can toggle between sensor visualization streams:
+
+• Top-Down Orthographic (2D):
+  Projects an orthogonal view along the Z-axis, eliminating perspective parallax.
+  Best for setting tight bounding boxes around parts resting on the table.
+
+• 3D Perspective (Point Cloud):
+  Provides an interactive 3D camera view (rotate with left-click, pan with right-click).
+  Allows setting the vertical height volume (Base Z and Top Z).
+
+• Color RGB Stream:
+  Displays the 2D visual camera feed for quality check template teaching and OCR.
+
+• Infrared (IR) Stream:
+  Displays the sensor's active infrared reflection feed. Completely immune to
+  fluctuations in shop-floor ambient factory lighting.
+
+
+================================================================================
+6. STEP-BY-STEP TEACHING PROTOCOLS (A TO Z)
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1 STANDARD STATIC OBJECTS & BINS ("WITH" / "WITHOUT")
+--------------------------------------------------------------------------------
+Step 1: In the tree, select the target Object or Picking Bin detection.
+Step 2: Switch to the [Teaching] sub-tab.
+Step 3: Define Working Zone: Drag the white dashed rectangle around the target area.
+Step 4: Capture "Without" Snapshot:
+        - Completely clear the zone (remove part, bin, and hands).
+        - Click [Without...]. The thumbnail displays the clear background baseline.
+Step 5: Capture "With" Snapshot:
+        - Place the physical component or bin squarely in position.
+        - Click [With...]. The thumbnail displays the placed component.
+Step 6: Choose Detection Mode:
+        - Automatic: Standard depth + IR combination.
+        - Depth: Relies strictly on physical height above table plane.
+        - IR: Relies on infrared reflectivity contrast.
+Step 7: Set Position Tolerance:
+        - Exact: 1.0x component size (recommended for precision fixtured parts).
+        - Accurate: 1.2x component size.
+        - Narrow: 1.5x component size (recommended for hand tools).
+        - Wide: 2.0x component size.
+Step 8: Check [Adjust Projection] so projection graphics map to the taught zone.
+Step 9: Click [Teach]. A solid green/blue bounding box confirms successful calibration.
+
+--------------------------------------------------------------------------------
+6.2 ACTIVITIES (DYNAMIC MOTION GESTURES)
+--------------------------------------------------------------------------------
+Step 1: Select the Activity detection and switch to [Teaching].
+Step 2: Frame the 3D bounding box over the spatial volume where operator hands work.
+Step 3: Click [Teach]. A modal dialog displays a 3-second countdown.
+Step 4: Perform Action: Operator enters the zone and executes the assembly action
+        at realistic line speed (e.g., pressing a seal, inserting a clip).
+Step 5: Withdraw hands from the zone and click [OK].
+Step 6: The algorithm analyzes the motion envelope and compiles the gesture model.
+
+--------------------------------------------------------------------------------
+6.3 QUALITY CHECKS & MULTI-CLASS INSPECTIONS
+--------------------------------------------------------------------------------
+Step 1: Select Quality Check (or Object with Quality Check).
+Step 2: Position the bounding zone tightly around the inspection feature.
+Step 3: Capture Training Classes:
+        • Expected Result (CORRECT): Assemble part properly -> Click [Expected Result].
+        • Bad Result (WRONG): Intentionally create flaw (e.g., tilted clip) -> Click [Bad Result].
+        • Missing (MISSING): Remove component entirely -> Click [Missing].
+Step 4: Select Vision Algorithm:
+        - Shape-Based: For rigid machined edges and stamped profiles.
+        - Texture-Based: For surface grain, wire braid, or etched marks.
+        - Histogram: For color distinctions.
+Step 5: Click [Teach]. The system builds the multi-class classifier.
+
+--------------------------------------------------------------------------------
+6.4 TEXT (OCR) AND BARCODES
+--------------------------------------------------------------------------------
+Step 1: Select Text (OCR) or Barcode detection.
+Step 2: Frame zone over the label area and position the physical sample code.
+Step 3: Click [Add Expected Result].
+Step 4: Set "Variable for Result" to receive the decoded text.
+Step 5: Configure validation rules (e.g., Regex match or prefix check).
+Step 6: Click [Teach]. Verify decoded characters match the physical label.
+
+
+================================================================================
+7. ADVANCED BOX FINETUNING & ALGORITHMIC PARAMETERS
+================================================================================
+When a detection requires fine boundary or sensitivity tuning, switch to the
+[Finetune] sub-tab:
+
+Parameter Group         | Setting & Recommended Value        | Operational Meaning
+-----------------------+------------------------------------+-------------------------------------------
+Z-Coordinates (Height)  | Base Z: +10 mm to +15 mm           | Height above bench where detection begins.
+                        |                                    | (Filters out dust, grease, small washers).
+                        | Height: +50 mm to +120 mm          | Total vertical volume thickness.
+-----------------------+------------------------------------+-------------------------------------------
+Detection Rates         | Min Fill Rate %: 25% – 35%         | Percentage of pixels in box that must be
+                        |                                    | active to trigger state ON.
+                        | Similarity %: 75% – 85%            | For Vision: minimum correlation score.
+-----------------------+------------------------------------+-------------------------------------------
+Debounce & Timing       | Time to ON: 100 ms – 200 ms        | Duration condition must persist before
+                        |                                    | toggling ON (filters transient hand flickers).
+                        | Time to OFF: 150 ms – 300 ms       | Duration condition must be absent before
+                        |                                    | toggling OFF (prevents dropouts).
+-----------------------+------------------------------------+-------------------------------------------
+Occlusion Handling      | Occlusion Check: [Checked]         | Prevents hand or arm shadows from falsely
+                        | Min Occlusion Rate: 20% – 30%      | triggering object presence.
+-----------------------+------------------------------------+-------------------------------------------
+Stream Selection        | Use IR: [Checked / Unchecked]      | Unchecked = 3D Depth; Checked = IR video.
+                        | Min / Max IR Intensity: [0 – 255]  | Pixel brightness window for IR detection.
+
+
+================================================================================
+8. VISION TOLERANCES, ROTATION & VARIABLE OVERRULING
+================================================================================
+For asymmetric or rotatable parts:
+
+1. Orientation Verification (Vision License):
+   • Check [Verify Orientation] to enforce angular alignment.
+   • Angular Tolerance: Set allowed deviation (e.g., ±5°).
+   • Symmetrical Orientations: For 180° or 90° symmetrical parts, check symmetry
+     so reverse placement is evaluated as valid.
+
+2. Overrule Location by Variables:
+   • Makes detection zone coordinates dynamic at runtime.
+   • In Properties, map:
+     - Variable for Position X / Y / Z
+     - Variable for Orientation Angle
+   • Example: On a rotating indexing table, the detection coordinates dynamically
+     rotate to match the rotary table encoder angle.
+
+
+================================================================================
+9. HARDWARE INTEGRATION (SMART TOOLS, DMX LIGHTS, PLC)
+================================================================================
+
+1. Smart Tool Controller (Open Protocol):
+   • Select a Tool detection -> Check [Smart Tool].
+   • Protocol: Select Open Protocol (Atlas Copco / Desoutter / Stanley).
+   • Functionality: Automatically locks the tool until the correct assembly step,
+     selects the tool Pset (tightening program), and verifies Torque OK / Angle OK.
+
+2. Pick-To-Light (DMX Bar Integration):
+   • In Properties -> Map to DMX Light Channel & Segment ID.
+   • The workstation automatically illuminates the bin's physical LED bar in
+     amber during picking, turns green upon valid pick, and flashes red on wrong pick.
+
+3. External Trigger Variables (PLC / Sensor Bypassing):
+   • Map a PLC boolean variable into [External Trigger Variable].
+   • When true, the detection activates directly from an external proximity switch
+     or fixture clamp sensor without optical evaluation.
+
+
+================================================================================
+10. PRACTICAL WORKFLOW: LINKING DETECTIONS TO THE STEPS TAB
+================================================================================
+Once detections are taught here in the Detections tab, navigate back to the
+Steps tab to insert them into your operating sequence:
+
+┌────────────────────────────┐               ┌──────────────────────────────────────┐
+│     DETECTIONS TAB         │               │              STEPS TAB               │
+├────────────────────────────┤               ├──────────────────────────────────────┤
+│ 1. Teach "Main_Housing"    │ ────────────► │ • Step: [Place Object]               │
+│    (Object: 3D Depth)      │               │   Target Detection: "Main_Housing"   │
+├────────────────────────────┤               ├──────────────────────────────────────┤
+│ 2. Teach "Bin_1_Bushing"   │ ────────────► │ • Step: [Pick Material]              │
+│    (Picking Bin)           │               │   Target Detection: "Bin_1_Bushing"  │
+├────────────────────────────┤               ├──────────────────────────────────────┤
+│ 3. Teach "Press_Bushing"   │ ────────────► │ • Step: [Activity]                   │
+│    (Activity: 3 Repetitions│               │   Target Detection: "Press_Bushing"  │
+├────────────────────────────┤               ├──────────────────────────────────────┤
+│ 4. Teach "Bushing_Quality" │ ────────────► │ • Step: [Quality Check]              │
+│    (Quality: Vision Depth) │               │   Target Detection: "Bushing_Quality"│
+│                            │               │   ├── CORRECT ──► Advance            │
+│                            │               │   └── WRONG   ──► Rework Loop        │
+└────────────────────────────┘               └──────────────────────────────────────┘
+
+================================================================================
+END OF GUIDE
+================================================================================

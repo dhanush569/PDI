@@ -5,27 +5,49 @@ import re
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QMenu, QPlainTextEdit, QRadioButton, QSplitter, QTabWidget, QTreeWidget,
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QGridLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPlainTextEdit,
+                               QPushButton, QRadioButton, QScrollArea, QSplitter, QTabWidget, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from vista.core.security import PermissionDenied, Perm
 from vista.engine.steps import CONTAINERS, STEP_SPECS, default_name, default_params, operator_text
+from vista.ui.dialogs_extra import Popup
 from vista.ui.icons import icon
 from vista.ui.theme import C, font
 from vista.ui.widgets.bench import BenchCanvas
 from vista.ui.widgets.common import (Page, ParamForm, PropertiesPanel, SearchBox, button, confirm, error, hrow, label,
                                      tool)
 
-STEP_ICON = {"NUMBERED": "steps", "COMPOSITE": "composite", "PLACE": "place", "TAKE": "take", "ACTIVITY": "hand",
-             "PRESS": "button", "QUALITY_CHECK": "eye", "WAIT_BARCODE": "barcode", "SNAPSHOT": "camera",
-             "SET_VARIABLE": "variable", "DELAY": "delay", "OPERATOR_DIALOG": "dialog",
-             "WORK_INSTRUCTION": "instruction"}
-CATEGORIES = [("General", ["NUMBERED", "COMPOSITE", "WORK_INSTRUCTION", "OPERATOR_DIALOG", "DELAY"]),
-              ("Detections", ["PLACE", "TAKE", "ACTIVITY", "PRESS", "QUALITY_CHECK"]),
-              ("Data", ["WAIT_BARCODE", "SNAPSHOT", "SET_VARIABLE"])]
+STEP_ICON = {
+    "NUMBERED": "steps", "COMPOSITE": "composite", "PLACE": "place", "TAKE": "take", "ACTIVITY": "hand",
+    "PRESS": "button", "QUALITY_CHECK": "eye", "WAIT_BARCODE": "barcode", "SNAPSHOT": "camera",
+    "SET_VARIABLE": "variable", "DELAY": "delay", "OPERATOR_DIALOG": "dialog",
+    "WORK_INSTRUCTION": "instruction",
+    # new icons:
+    "EXECUTE_TASK": "job", "JOB_CONTROL": "process", "PROCESS_CONTROL": "settings", "RESETTER": "reset",
+    "SWITCH_JOB_OPTION": "variants", "SWITCH_STEP": "steps",
+    "COUNTER": "counter", "FIND_REPLACE_STRING": "search", "FUNCTION": "function",
+    "SPLIT_STRING_INDEX": "variable", "SPLIT_STRING_ARG": "variable",
+    "STRING_FORMATTER": "text", "STRING_PARSER": "text", "VARIABLE_CHANGED": "variable", "VARIABLE_LOGGER": "log",
+    "BACK": "arrow_left", "JOB_CLOSE_BUTTON": "close", "NEXT_BUTTON": "arrow_right", "PREVIOUS_BUTTON": "arrow_left",
+    "START": "play", "SEND_COMMUNICATION": "export", "WAIT_COMMUNICATION": "clock",
+    "FILE_MOVER": "file", "READ_FROM_FILE": "open", "SOUND": "sound", "WRITE_TO_FILE": "save",
+}
+CATEGORIES = [
+    ("General", ["NUMBERED", "COMPOSITE", "DELAY", "EXECUTE_TASK", "JOB_CONTROL", "OPERATOR_DIALOG",
+                 "PROCESS_CONTROL", "RESETTER", "SNAPSHOT", "SWITCH_JOB_OPTION", "SWITCH_STEP", "WORK_INSTRUCTION"]),
+    ("Variables", ["COUNTER", "FIND_REPLACE_STRING", "FUNCTION", "SET_VARIABLE", "SPLIT_STRING_ARG",
+                   "SPLIT_STRING_INDEX", "STRING_FORMATTER", "STRING_PARSER", "VARIABLE_CHANGED", "VARIABLE_LOGGER"]),
+    ("Detections", ["PLACE", "TAKE", "ACTIVITY", "PRESS", "QUALITY_CHECK", "WAIT_BARCODE"]),
+    ("Materials", []),
+    ("Screen Buttons", ["BACK", "JOB_CLOSE_BUTTON", "NEXT_BUTTON", "PREVIOUS_BUTTON", "START"]),
+    ("Communication", ["SEND_COMMUNICATION", "WAIT_COMMUNICATION"]),
+    ("Extra", ["FILE_MOVER", "READ_FROM_FILE", "SOUND", "WRITE_TO_FILE"]),
+]
 TRIGGER_TYPES = {"PLACE", "TAKE", "ACTIVITY", "PRESS", "QUALITY_CHECK", "WAIT_BARCODE", "DELAY", "OPERATOR_DIALOG",
-                 "WORK_INSTRUCTION"}
+                 "WORK_INSTRUCTION", "VARIABLE_CHANGED", "WAIT_COMMUNICATION", "BACK", "NEXT_BUTTON",
+                 "PREVIOUS_BUTTON", "START", "JOB_CLOSE_BUTTON"}
 
 
 class StepTree(QTreeWidget):
@@ -47,6 +69,225 @@ class StepTree(QTreeWidget):
     def dropEvent(self, e):  # noqa: N802
         super().dropEvent(e)
         self.dropped.emit()
+
+
+class StepTile(QPushButton):
+    """Clean step tile button matching Arkite design."""
+    def __init__(self, title: str, icon_name: str, step_type: str, det_id: int | None = None, is_primary: bool = False):
+        super().__init__()
+        self.step_type = step_type
+        self.det_id = det_id
+        self.setText(f"  {title}")
+        self.setIcon(icon(icon_name, "#FFFFFF" if is_primary else C["ink"], 18))
+        self.setIconSize(QSize(20, 20))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(44)
+        if is_primary:
+            self.setStyleSheet("""
+                QPushButton {
+                    background: #0969DA; color: #FFFFFF; border: 1px solid #0969DA;
+                    border-radius: 4px; padding: 6px 12px; font-weight: bold; text-align: left;
+                }
+                QPushButton:hover { background: #0858B8; }
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: #FFFFFF; color: #1B2129; border: 1px solid {C['line']};
+                    border-radius: 4px; padding: 6px 12px; font-weight: 500; text-align: left;
+                }}
+                QPushButton:hover {{
+                    background: #F3F6FA; border: 1.5px solid #0969DA;
+                }}
+            """)
+
+
+class NewStepDialog(Popup):
+    """Arkite 'New Step' modal with search, category tabs, and tile grid."""
+
+    def __init__(self, parent, ctx, job: dict, dets: list[dict]):
+        super().__init__(parent, "New Step", "Select a step type or detection from the library to insert.",
+                         ico="steps", width=920)
+        self.ctx, self.job, self.dets = ctx, job, dets
+        self.selected_type: str | None = None
+        self.selected_det_id: int | None = None
+
+        s_row = QHBoxLayout()
+        s_row.addWidget(label("Search", "Muted"))
+        self.search_in = QLineEdit()
+        self.search_in.setPlaceholderText("Type to filter steps...")
+        self.search_in.setStyleSheet("QLineEdit { padding: 6px 10px; border-radius: 4px; border: 1px solid #C8D1DC; font-size: 13px; }")
+        self.search_in.textChanged.connect(self._filter)
+        s_row.addWidget(self.search_in, 1)
+        self.body.addLayout(s_row)
+
+        mid = QHBoxLayout()
+        mid.setSpacing(12)
+
+        self.cat_list = QListWidget()
+        self.cat_list.setFixedWidth(160)
+        self.cat_list.setStyleSheet(f"""
+            QListWidget {{
+                border: 1px solid {C['line']}; border-radius: 6px; background: #F8FAFC; outline: none;
+            }}
+            QListWidget::item {{
+                padding: 10px 12px; border-bottom: 1px solid #EDF1F6; font-size: 13px; color: #334155;
+            }}
+            QListWidget::item:selected {{
+                background: #FFFFFF; color: #0969DA; font-weight: bold; border-left: 3px solid #0969DA;
+            }}
+        """)
+        for cat_name, _ in CATEGORIES:
+            self.cat_list.addItem(cat_name)
+        self.cat_list.currentRowChanged.connect(self._show_category)
+        mid.addWidget(self.cat_list)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet(f"QScrollArea {{ border: 1px solid {C['line']}; border-radius: 6px; background: #FFFFFF; }}")
+        self.tile_container = QWidget()
+        self.tile_container.setStyleSheet("background: #FFFFFF;")
+        self.tile_lay = QVBoxLayout(self.tile_container)
+        self.tile_lay.setContentsMargins(14, 14, 14, 14)
+        self.tile_lay.setSpacing(10)
+        self.scroll.setWidget(self.tile_container)
+        mid.addWidget(self.scroll, 1)
+        self.body.addLayout(mid, 1)
+
+        self.btn_cancel = button("Cancel", None, self.reject)
+        self.footer.addStretch(1)
+        self.footer.addWidget(self.btn_cancel)
+
+        self.cat_list.setCurrentRow(0)
+
+    def _choose(self, step_type: str, det_id: int | None = None) -> None:
+        self.selected_type = step_type
+        self.selected_det_id = det_id
+        self.accept()
+
+    def _filter(self, query: str) -> None:
+        q = query.lower().strip()
+        if not q:
+            self._show_category(self.cat_list.currentRow())
+            return
+        while self.tile_lay.count():
+            it = self.tile_lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+            elif it.layout():
+                while it.layout().count():
+                    w = it.layout().takeAt(0).widget()
+                    if w:
+                        w.deleteLater()
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        row, col = 0, 0
+        for t, spec in STEP_SPECS.items():
+            lbl = spec["label"]
+            if q in lbl.lower() or q in t.lower():
+                ico = STEP_ICON.get(t, "info")
+                btn = StepTile(lbl, ico, t)
+                btn.clicked.connect(lambda _, k=t: self._choose(k))
+                grid.addWidget(btn, row, col)
+                col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
+        self.tile_lay.addLayout(grid)
+        self.tile_lay.addStretch(1)
+
+    def _show_category(self, idx: int) -> None:
+        if idx < 0 or idx >= len(CATEGORIES):
+            return
+        cat_name, step_types = CATEGORIES[idx]
+
+        while self.tile_lay.count():
+            it = self.tile_lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+            elif it.layout():
+                while it.layout().count():
+                    w = it.layout().takeAt(0).widget()
+                    if w:
+                        w.deleteLater()
+
+        if cat_name == "Detections":
+            self.tile_lay.addWidget(label("Detections (Project-Wide)", "H3"))
+            grid_pw = QGridLayout()
+            grid_pw.setSpacing(10)
+            btn_new_pw = StepTile("+ New Project-Wide...", "plus", "PLACE", is_primary=True)
+            btn_new_pw.clicked.connect(lambda: self._choose("PLACE", None))
+            grid_pw.addWidget(btn_new_pw, 0, 0)
+            pw_dets = [d for d in self.dets if d.get("job_id") is None]
+            c = 1
+            r = 0
+            for d in pw_dets:
+                btn = StepTile(d["name"], "cube", "PLACE", det_id=d["id"])
+                btn.clicked.connect(lambda _, did=d["id"]: self._choose("PLACE", did))
+                grid_pw.addWidget(btn, r, c)
+                c += 1
+                if c >= 3:
+                    c = 0
+                    r += 1
+            self.tile_lay.addLayout(grid_pw)
+
+            self.tile_lay.addWidget(label("Detections (Job)", "H3"))
+            grid_job = QGridLayout()
+            grid_job.setSpacing(10)
+            btn_new_j = StepTile("+ New Job Detection", "plus", "PLACE", is_primary=True)
+            btn_new_j.clicked.connect(lambda: self._choose("PLACE", None))
+            grid_job.addWidget(btn_new_j, 0, 0)
+            job_dets = [d for d in self.dets if d.get("job_id") is not None]
+            c = 1
+            r = 0
+            for d in job_dets:
+                btn = StepTile(d["name"], "hand" if d["det_type"] == "ACTIVITY" else "eye" if d["det_type"] == "QUALITY" else "cube", "PLACE", det_id=d["id"])
+                btn.clicked.connect(lambda _, did=d["id"]: self._choose("PLACE", did))
+                grid_job.addWidget(btn, r, c)
+                c += 1
+                if c >= 3:
+                    c = 0
+                    r += 1
+            self.tile_lay.addLayout(grid_job)
+
+            self.tile_lay.addWidget(label("Based on variable (advanced)", "Muted"))
+            btn_var_det = StepTile("Variable based detection", "variable", "SET_VARIABLE")
+            btn_var_det.clicked.connect(lambda: self._choose("SET_VARIABLE"))
+            self.tile_lay.addWidget(btn_var_det)
+
+        elif cat_name == "Materials":
+            self.tile_lay.addWidget(label("Materials", "H3"))
+            grid_mat = QGridLayout()
+            grid_mat.setSpacing(10)
+            btn_new_m = StepTile("+ New Material", "plus", "PLACE", is_primary=True)
+            btn_new_m.clicked.connect(lambda: self._choose("PLACE"))
+            grid_mat.addWidget(btn_new_m, 0, 0)
+            self.tile_lay.addLayout(grid_mat)
+
+            self.tile_lay.addWidget(label("Based on variable (advanced)", "Muted"))
+            btn_var_mat = StepTile("Variable based material", "variable", "SET_VARIABLE")
+            btn_var_mat.clicked.connect(lambda: self._choose("SET_VARIABLE"))
+            self.tile_lay.addWidget(btn_var_mat)
+
+        else:
+            grid = QGridLayout()
+            grid.setSpacing(10)
+            row, col = 0, 0
+            for t in step_types:
+                spec = STEP_SPECS.get(t)
+                if not spec:
+                    continue
+                ico = STEP_ICON.get(t, "steps")
+                btn = StepTile(spec["label"], ico, t)
+                btn.clicked.connect(lambda _, k=t: self._choose(k))
+                grid.addWidget(btn, row, col)
+                col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
+            self.tile_lay.addLayout(grid)
+
+        self.tile_lay.addStretch(1)
 
 
 class StepsPage(Page):
@@ -71,12 +312,16 @@ class StepsPage(Page):
         ll.setContentsMargins(8, 8, 8, 8)
         ll.setSpacing(6)
         self.b_new = button("New Step", "primary", ico="plus")
+        self.b_new.clicked.connect(self.open_new_step_dialog)
         menu = QMenu(self)
         for cat, types in CATEGORIES:
+            if not types:
+                continue
             menu.addSection(cat)
             for t in types:
-                menu.addAction(icon(STEP_ICON[t], C["ink"], 16), STEP_SPECS[t]["label"],
-                               lambda k=t: self.add_step(k))
+                if t in STEP_SPECS:
+                    menu.addAction(icon(STEP_ICON.get(t, "steps"), C["ink"], 16), STEP_SPECS[t]["label"],
+                                   lambda k=t: self.add_step(k))
         self.b_new.setMenu(menu)
         self.add_menu = menu
         self.t_out = tool("outdent", "Move out of the parent step", self.outdent)
@@ -265,13 +510,23 @@ class StepsPage(Page):
         ia, ra = st["instruction_area_mm"], st["result_area_mm"]
         self.bench.set_scene(items, [{"rect": ia, "label": "Instruction text"}, {"rect": ra, "label": "Result"}],
                              selected=sel)
+        if hasattr(self.main, "projector") and self.main.projector and self.isVisible():
+            self.main.projector.set_live_scene(items, highlight=sel,
+                                               title=f"Step: {s['name']}" if s else None)
         if s:
-            self.screen_step.setText(f"{STEP_SPECS[s['step_type']]['label']} · {s['name']}")
+            lbl = STEP_SPECS.get(s['step_type'], {}).get('label', s['step_type'])
+            hlp = STEP_SPECS.get(s['step_type'], {}).get('help', '')
+            self.screen_step.setText(f"{lbl} · {s['name']}")
             self.screen_text.setText(operator_text(s))
-            self.screen_help.setText(STEP_SPECS[s["step_type"]]["help"])
+            self.screen_help.setText(hlp)
         else:
             self.screen_text.setText("Select a step")
             self.screen_step.setText("")
+
+    def hideEvent(self, e):  # noqa: N802
+        if hasattr(self.main, "projector") and self.main.projector:
+            self.main.projector.clear_live_scene()
+        super().hideEvent(e)
 
     def _properties(self, s) -> None:
         p = self.props
@@ -349,10 +604,19 @@ class StepsPage(Page):
         self.job_lbl.setText(f"{self.job['code']} · rev {self.job['revision']} · {self.job['status'].lower()}")
         self.main._refresh_command()
 
+    def open_new_step_dialog(self) -> None:
+        if self.job is None:
+            return error(self, "Select a job first.")
+        if not self._guard():
+            return
+        dlg = NewStepDialog(self, self.ctx, self.job, self.dets)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_type:
+            self.add_step(dlg.selected_type, dlg.selected_det_id)
+
     def add_step_menu(self) -> None:
         self.add_menu.exec(self.b_new.mapToGlobal(self.b_new.rect().bottomLeft()))
 
-    def add_step(self, step_type: str) -> None:
+    def add_step(self, step_type: str, preselected_det_id: int | None = None) -> None:
         if self.job is None:
             return error(self, "Select a job first.")
         s = self._guard()
@@ -364,16 +628,21 @@ class StepsPage(Page):
             st = self.steps[cur]
             parent_id = cur if st["step_type"] in CONTAINERS else st["parent_id"]
         det_id, det_name = None, None
-        kinds = STEP_SPECS[step_type]["detection"]
-        if kinds:
-            opts = [d for d in self.dets if d["det_type"] in kinds]
-            if opts:
-                from PySide6.QtWidgets import QInputDialog
-                names = [d["name"] for d in opts]
-                name, ok = QInputDialog.getItem(self, "Detection", "Detection for this step:", names, 0, False)
-                if not ok:
-                    return
-                det_id, det_name = opts[names.index(name)]["id"], name
+        if preselected_det_id is not None:
+            det = next((d for d in self.dets if d["id"] == preselected_det_id), None)
+            if det:
+                det_id, det_name = det["id"], det["name"]
+        else:
+            kinds = STEP_SPECS.get(step_type, {}).get("detection")
+            if kinds:
+                opts = [d for d in self.dets if d["det_type"] in kinds]
+                if opts:
+                    from PySide6.QtWidgets import QInputDialog
+                    names = [d["name"] for d in opts]
+                    name, ok = QInputDialog.getItem(self, "Detection", "Detection for this step:", names, 0, False)
+                    if not ok:
+                        return
+                    det_id, det_name = opts[names.index(name)]["id"], name
         siblings = [x for x in self.steps.values() if x["parent_id"] == parent_id]
         order = max([x["sort_order"] for x in siblings], default=0) + 1
         sid = self.ctx.jobs.create_step(self.job["id"], parent_id, step_type, default_name(step_type, det_name), order,

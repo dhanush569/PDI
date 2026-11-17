@@ -100,6 +100,17 @@ P = {
     "close": '<path d="M6 6l12 12M18 6 6 18"/>',
     "filter": '<path d="M3 5h18l-7 8.5V20l-4-2v-4.5z"/>',
     "dot": '<circle cx="12" cy="12" r="5" fill="currentColor"/>',
+    # new icons for detections and steps
+    "tool": '<path d="m14.7 6.3 3 3-9 9H5.7v-3l9-9z"/><path d="m13.5 7.5 3 3M17 4a3 3 0 0 1 3 3l-1.5 1.5-4.5-4.5L15.5 2.5A3 3 0 0 1 17 4z"/>',
+    "bin": '<path d="M4 8h16l-2 12H6L4 8z"/><path d="M3 5h18v3H3z"/><path d="M10 12v5M14 12v5"/>',
+    "text": '<path d="M4 7V4h16v3M12 4v16M9 20h6"/>',
+    "group": '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="8.5" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v2a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-2M12 14v-2"/>',
+    "cad": '<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/>',
+    "draft": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
+    "sound": '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+    "file": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+    "function": '<path d="M9 18V6c0-2.5 1.5-3 3-3M6 12h8"/>',
+    "counter": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9v6M12 12h4M14 10v4"/>',
 }
 
 

@@ -311,7 +311,11 @@ class JobsPage(Page):
         rel_b = button("Release", None, self.release, ico="release")
         rel_b.setEnabled(bool(self.ctx.session and self.ctx.session.can(Perm.RELEASE_JOBS))
                          and j["status"] == "DRAFT")
+        revert_b = button("Revert to Draft", None, self.revert_to_draft, ico="draft")
+        revert_b.setEnabled(bool(self.ctx.session and (self.ctx.session.can(Perm.RELEASE_JOBS) or self.ctx.session.can(Perm.EDIT_JOBS)))
+                            and j["status"] == "RELEASED")
         p.footer.addWidget(rel_b)
+        p.footer.addWidget(revert_b)
         p.footer.addStretch(1)
         p.footer.addWidget(save)
 
@@ -430,6 +434,20 @@ class JobsPage(Page):
             return
         rev = self.ctx.jobs.release(j["id"], s.user_id)
         self.ctx.audit("JOB_RELEASED", "job", j["id"], {"code": j["code"], "revision": rev})
+        self.main._refresh_command()
+        self.reload()
+
+    def revert_to_draft(self) -> None:
+        s = self._guard(Perm.EDIT_JOBS)
+        if not s or not self.job:
+            return
+        j = self.ctx.jobs.get(self.job["id"])
+        if j["status"] != "RELEASED":
+            return info(self, "This job is already in Draft.")
+        if not confirm(self, f"Revert job '{j['code']}' to Draft? Operators will not be able to run it until it is re-released."):
+            return
+        self.ctx.jobs.mark_draft(j["id"], s.user_id)
+        self.ctx.audit("JOB_REVERTED_TO_DRAFT", "job", j["id"], {"code": j["code"]})
         self.main._refresh_command()
         self.reload()
 

@@ -237,6 +237,7 @@ class ImageView(QWidget):
     """Image with overlays. Wheel = zoom, right/middle drag = pan, left drag = draw zone (edit mode)."""
 
     rect_changed = Signal(list)
+    rect_dragging = Signal(list)
     clicked = Signal(float, float)
     hovered = Signal(float, float)
 
@@ -372,6 +373,8 @@ class ImageView(QWidget):
         x, y = min(max(x, 0), W), min(max(y, 0), H)
         self.edit_rect = [min(x0, x), min(y0, y), abs(x - x0), abs(y - y0)]
         self.update()
+        if self.edit_rect[2] > 2 and self.edit_rect[3] > 2:
+            self.rect_dragging.emit(self.edit_rect)
 
     def mouseReleaseEvent(self, e):  # noqa: N802
         if self._pan_start is not None:

@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
+from PySide6.QtGui import QColor, QKeySequence, QPixmap
+from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
                                QProgressBar, QScrollArea, QSplitter, QTabWidget, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from vista.core.security import PermissionDenied, Perm
+from vista.ui.dialogs_extra import Popup
 from vista.ui.icons import icon
 from vista.ui.theme import C, font
 from vista.ui.widgets.bench import BenchCanvas
@@ -18,9 +19,56 @@ from vista.vision.detectors import (ACTIVITY_DEFAULTS, BUTTON_DEFAULTS, OBJECT_D
                                    QUALITY_DEFAULTS, TOLERANCE, TeachError, decode_png, teach_object, teach_quality,
                                    teach_zone_baseline)
 
-TYPE_LABEL = {"OBJECT": "Object", "ACTIVITY": "Activity", "BUTTON": "Virtual button", "QUALITY": "Quality check"}
-TYPE_ICON = {"OBJECT": "cube", "ACTIVITY": "hand", "BUTTON": "button", "QUALITY": "eye"}
-SENSORS = {"OBJECT": ["DEPTH", "IR"], "ACTIVITY": ["DEPTH"], "BUTTON": ["DEPTH"], "QUALITY": ["COLOR", "VISION"]}
+TYPE_LABEL = {
+    "OBJECT": "Object",
+    "OBJECT_QUALITY": "Object with Quality Check",
+    "TOOL": "Tool",
+    "PICKING_BIN": "Picking Bin",
+    "BUTTON": "Virtual button",
+    "ACTIVITY": "Activity",
+    "QUALITY": "Quality check",
+    "TEXT_OCR": "Text (OCR)",
+    "BARCODE": "Barcode (QR/DM)",
+    "GROUP": "Group",
+    "CADCAM": "CAD/CAM detection",
+}
+TYPE_ICON = {
+    "OBJECT": "cube",
+    "OBJECT_QUALITY": "cube",
+    "TOOL": "tool",
+    "PICKING_BIN": "bin",
+    "BUTTON": "button",
+    "ACTIVITY": "hand",
+    "QUALITY": "eye",
+    "TEXT_OCR": "text",
+    "BARCODE": "barcode",
+    "GROUP": "group",
+    "CADCAM": "cad",
+}
+TYPE_SHORTCUT = {
+    "OBJECT": "Ctrl+Shift+O",
+    "OBJECT_QUALITY": "Ctrl+Shift+K",
+    "TOOL": "Ctrl+Shift+T",
+    "PICKING_BIN": "Ctrl+Shift+P",
+    "BUTTON": "Ctrl+Shift+B",
+    "ACTIVITY": "Ctrl+Shift+A",
+    "QUALITY": "Ctrl+Shift+Q",
+    "TEXT_OCR": "Ctrl+Shift+X",
+    "BARCODE": "Ctrl+Shift+C",
+}
+SENSORS = {
+    "OBJECT": ["DEPTH", "IR"],
+    "OBJECT_QUALITY": ["COLOR", "VISION"],
+    "TOOL": ["DEPTH", "IR", "VISION"],
+    "PICKING_BIN": ["DEPTH"],
+    "BUTTON": ["DEPTH"],
+    "ACTIVITY": ["DEPTH"],
+    "QUALITY": ["COLOR", "VISION"],
+    "TEXT_OCR": ["COLOR", "VISION"],
+    "BARCODE": ["COLOR", "VISION"],
+    "GROUP": ["DEPTH"],
+    "CADCAM": ["DEPTH"],
+}
 SENSOR_LABEL = {"DEPTH": "3D sensor - depth", "IR": "3D sensor - infrared", "COLOR": "3D sensor - colour (RGB)",
                 "VISION": "Vision camera"}
 STREAM_FOR = {"DEPTH": "HEIGHT", "IR": "IR", "COLOR": "COLOR", "VISION": "VISION"}
@@ -41,6 +89,18 @@ PARAM_SPECS = {
                ("occlusion_mm", "Occlusion above object (mm)", "float", OBJECT_DEFAULTS["occlusion_mm"], (5, 1000)),
                ("occlusion_max", "Maximum occluded fraction", "float", OBJECT_DEFAULTS["occlusion_max"], (0, 1)),
                ("debounce_ms", "Debounce (ms)", "int", OBJECT_DEFAULTS["debounce_ms"], (0, 5000))],
+    "OBJECT_QUALITY": [("present_score", "Present at score ≥", "float", 0.70, (0, 1)),
+                       ("min_score", "Minimum quality similarity", "float", QUALITY_DEFAULTS["min_score"], (0, 1)),
+                       ("min_margin", "Minimum margin to bad classes", "float", QUALITY_DEFAULTS["min_margin"], (0, 1)),
+                       ("debounce_ms", "Debounce (ms)", "int", 200, (0, 5000))],
+    "TOOL": [("present_score", "Detected at score ≥", "float", 0.65, (0, 1)),
+             ("smart_tool", "Smart tool controller link", "bool", False, None),
+             ("wait_ok", "Require OK signal before release", "bool", True, None),
+             ("debounce_ms", "Debounce (ms)", "int", 200, (0, 5000))],
+    "PICKING_BIN": [("min_rise_mm", "Hand inside bin (mm from rim)", "float", 30.0, (5, 300)),
+                    ("enter_ratio", "Bin opening fill ratio", "float", 0.15, (0, 1)),
+                    ("min_dwell_ms", "Minimum dwell time (ms)", "int", 150, (0, 5000)),
+                    ("material_code", "Linked material code", "str", "", None)],
     "ACTIVITY": [("min_rise_mm", "Hand above bench from (mm)", "float", ACTIVITY_DEFAULTS["min_rise_mm"], (1, 500)),
                  ("max_rise_mm", "… up to (mm)", "float", ACTIVITY_DEFAULTS["max_rise_mm"], (10, 1500)),
                  ("enter_ratio", "Zone fill to count as inside", "float", ACTIVITY_DEFAULTS["enter_ratio"], (0, 1)),
@@ -57,6 +117,16 @@ PARAM_SPECS = {
                 ("search_px", "Position search (px)", "int", QUALITY_DEFAULTS["search_px"], (0, 80)),
                 ("occlusion_mm", "Occlusion height (mm)", "float", QUALITY_DEFAULTS["occlusion_mm"], (5, 1000)),
                 ("occlusion_max", "Maximum occluded fraction", "float", QUALITY_DEFAULTS["occlusion_max"], (0, 1))],
+    "TEXT_OCR": [("variable", "Store text in variable", "str", "OCR_RESULT", None),
+                 ("expected_regex", "Validate pattern (regex)", "str", "", None),
+                 ("ignore_whitespace", "Ignore whitespace", "bool", True, None),
+                 ("ignore_case", "Ignore letter case", "bool", True, None)],
+    "BARCODE": [("variable", "Store barcode in variable", "str", "BARCODE", None),
+                ("symbology", "Symbology", "choice", "ALL", ["ALL", "QR", "DATA_MATRIX", "CODE128", "EAN13"]),
+                ("expected_regex", "Validate regex", "str", "", None)],
+    "GROUP": [],
+    "CADCAM": [("template_detection", "Template detection name", "str", "", None),
+               ("stl_model_path", "STL 3D model file", "str", "", None)],
 }
 
 
@@ -93,6 +163,110 @@ class SnapBox(QFrame):
             self.img.setPixmap(pm)
 
 
+class TeachActivityDialog(Popup):
+    """Arkite Live Motion Capture & Teaching Dialog for Activity detections.
+    User positions workspace, performs the activity in real time, and clicks OK."""
+
+    def __init__(self, parent, page, det: dict, roi: list):
+        super().__init__(parent, f"Teach Activity: {det['name']}",
+                         "Position workspace, keep empty for baseline, then perform activity inside the workspace.",
+                         ico="hand", width=740)
+        self.page = page
+        self.det = det
+        self.roi = roi
+        self.ctx = page.ctx
+        self.baseline_sig = None
+        self.baseline_depth = None
+        self.motion_count = 0
+
+        self.cam_view = ImageView(placeholder="Streaming camera feed...")
+        self.cam_view.setMinimumSize(540, 300)
+        self.cam_view.set_edit_rect(roi, editable=False)
+        self.body.addWidget(self.cam_view)
+
+        self.status_lbl = label("Acquiring baseline empty workspace...", "H3")
+        self.body.addWidget(self.status_lbl)
+
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.body.addWidget(self.bar)
+
+        self.stats_lbl = label("Baseline: pending | Motion events detected: 0 | Live status: Waiting", "Muted")
+        self.body.addWidget(self.stats_lbl)
+
+        self.btn_recapture = button("Recapture Empty Zone", None, self._capture_baseline, ico="camera")
+        self.btn_ok = button("OK - Complete Teaching", "primary", self._finish, ico="check_circle")
+        self.btn_cancel = button("Cancel", None, self.reject)
+
+        self.footer.addWidget(self.btn_recapture)
+        self.footer.addStretch(1)
+        self.footer.addWidget(self.btn_cancel)
+        self.footer.addWidget(self.btn_ok)
+
+        # Project workspace live on physical table immediately
+        self._project_live_roi()
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(50)
+
+        QTimer.singleShot(300, self._capture_baseline)
+
+    def _project_live_roi(self) -> None:
+        cal = self.ctx.calibration
+        if cal is not None and self.roi:
+            x, y, w, h = self.roi
+            corners_px = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+            poly_mm = cal.camera_to_bench(corners_px).tolist()
+            items = self.page._get_live_items()
+            self.page.main.projector.set_live_scene(items, highlight=self.det["id"],
+                                                    live_roi_poly=poly_mm, title=f"Perform Activity: {self.det['name']}")
+
+    def _capture_baseline(self) -> None:
+        try:
+            sig, heights = self.page._signals(5)
+            self.baseline_sig = sig
+            self.baseline_depth = sig[0] if sig else None
+            self.status_lbl.setText("Baseline acquired! Now perform the activity inside the workspace.")
+            self.status_lbl.setStyleSheet(f"color: {C['ok']}; font-weight: bold;")
+        except Exception as exc:
+            self.status_lbl.setText(f"Waiting for camera frames: {exc}")
+
+    def _tick(self) -> None:
+        f = self.ctx.latest_frame()
+        if f is None:
+            return
+        img = frame_view(f, self.page.stream.currentText())
+        self.cam_view.set_image(img)
+        # Check motion relative to baseline in workspace ROI
+        if self.baseline_depth is not None and f.height_mm is not None and self.roi:
+            x, y, w, h = [int(v) for v in self.roi]
+            H, W = f.height_mm.shape
+            if 0 <= y and y + h <= H and 0 <= x and x + w <= W:
+                curr_roi = f.height_mm[y:y + h, x:x + w]
+                base_roi = self.baseline_depth[y:y + h, x:x + w]
+                diff = np.abs(curr_roi - base_roi)
+                valid = np.isfinite(diff)
+                if np.any(valid):
+                    motion_level = float(np.nanpercentile(diff[valid], 90))
+                    val = min(100, int(motion_level * 2))
+                    self.bar.setValue(val)
+                    if motion_level > 25.0:
+                        self.motion_count += 1
+                    self.stats_lbl.setText(f"Baseline: OK | Motion level: {motion_level:.1f} mm | Frames recorded: {self.motion_count}")
+
+    def _finish(self) -> None:
+        if self.baseline_depth is None or self.baseline_sig is None:
+            return error(self, "No baseline captured. Keep the workspace empty and click 'Recapture Empty Zone'.")
+        try:
+            model, arrays = teach_zone_baseline(self.roi, self.baseline_sig[0])
+            self.ctx.store_teaching(self.det["id"], model, arrays)
+            self.accept()
+        except Exception as exc:
+            error(self, str(exc))
+
+
 class DetectionsPage(Page):
     def __init__(self, ctx, executor, main):
         super().__init__()
@@ -116,12 +290,25 @@ class DetectionsPage(Page):
         ll.setContentsMargins(8, 8, 8, 8)
         self.b_new = button("New", "primary", ico="plus")
         m = QMenu(self)
-        m.addSection("Job-specific")
-        for t in TYPE_LABEL:
-            m.addAction(icon(TYPE_ICON[t], C["ink"], 16), TYPE_LABEL[t], lambda t=t: self.new(t, False))
-        m.addSection("Station-wide (all jobs)")
-        for t in TYPE_LABEL:
-            m.addAction(icon(TYPE_ICON[t], C["ink"], 16), TYPE_LABEL[t], lambda t=t: self.new(t, True))
+        ORDERED_TYPES_1 = ["OBJECT", "OBJECT_QUALITY", "TOOL", "PICKING_BIN", "BUTTON",
+                           "ACTIVITY", "QUALITY", "TEXT_OCR", "BARCODE"]
+        ORDERED_TYPES_2 = ["GROUP", "CADCAM"]
+
+        for t in ORDERED_TYPES_1:
+            act = m.addAction(icon(TYPE_ICON[t], C["ink"], 16), TYPE_LABEL[t], lambda t=t: self.new(t, False))
+            if t in TYPE_SHORTCUT:
+                act.setShortcut(QKeySequence(TYPE_SHORTCUT[t]))
+        m.addSeparator()
+        for t in ORDERED_TYPES_2:
+            act = m.addAction(icon(TYPE_ICON[t], C["ink"], 16), TYPE_LABEL[t], lambda t=t: self.new(t, False))
+            if t in TYPE_SHORTCUT:
+                act.setShortcut(QKeySequence(TYPE_SHORTCUT[t]))
+
+        m.addSeparator()
+        sw_menu = m.addMenu(icon("connectivity", C["ink"], 16), "Station-wide (all jobs)")
+        for t in ORDERED_TYPES_1 + ORDERED_TYPES_2:
+            sw_menu.addAction(icon(TYPE_ICON[t], C["ink"], 16), TYPE_LABEL[t], lambda t=t: self.new(t, True))
+
         self.b_new.setMenu(m)
         self.new_menu_obj = m
         ll.addLayout(hrow(self.b_new, None, tool("expand", "Expand all", lambda: self.tree.expandAll()),
@@ -147,6 +334,7 @@ class DetectionsPage(Page):
         self.tabs.addTab(self._teaching_tab(), "Teaching")
         self.tabs.addTab(self._finetune_tab(), "Fine tune")
         self.tabs.addTab(self._projector_tab(), "Projector")
+        self.tabs.currentChanged.connect(self._tab_changed)
         split.addWidget(self.tabs)
         split.setSizes([290, 900])
         self.props = PropertiesPanel(width=300)
@@ -155,6 +343,13 @@ class DetectionsPage(Page):
         self._t.timeout.connect(self._live)
         self._t.start(200)
         main.job_context_changed.connect(lambda _: self.on_show() if self.isVisible() else None)
+
+    def _tab_changed(self, idx: int) -> None:
+        if idx in (1, 2):
+            self.main.projector.set_live_scene(self._get_live_items(), highlight=self.det["id"] if self.det else None,
+                                               title="Fine Tune" if idx == 1 else "Projector Bench")
+        else:
+            self._bench_scene()
 
     # ================================================================== tab builders
     def _teaching_tab(self) -> QWidget:
@@ -172,6 +367,7 @@ class DetectionsPage(Page):
         icon_lbl.setPixmap(icon("camera", C["ink"], 18).pixmap(18, 18))
         self.view = ImageView(placeholder="Waiting for camera")
         self.view.rect_changed.connect(self._roi_changed)
+        self.view.rect_dragging.connect(self._roi_dragging)
         self.view.hovered.connect(self._hover)
         col.addWidget(self.view, 1)
         self.readout = label("Mouse wheel: zoom   Right button: move   Left drag: working zone", "Muted")
@@ -266,6 +462,7 @@ class DetectionsPage(Page):
         self.bench = BenchCanvas(self.ctx)
         self.bench.zone_clicked.connect(lambda did: self.select_detection(did))
         self.bench.zone_moved.connect(self._zone_moved)
+        self.bench.zone_dragging.connect(self._zone_dragging)
         lay.addLayout(hrow(label("Drag the selected zone to shift its projection on the bench.", "Muted"), None,
                            button("Reset shift", None, self._reset_shift, ico="reset"),
                            button("Show all zones on bench", None, lambda: self.main.projector.set_mode("TEST"),
@@ -380,22 +577,26 @@ class DetectionsPage(Page):
         self.sensor_lbl.setText(SENSOR_LABEL[d["sensor"]])
         self.roi = d["model"].get("roi")
         self.view.set_edit_rect(self.roi, edit)
-        quality = t == "QUALITY"
-        zone = t in ("ACTIVITY", "BUTTON")
+        quality = t in ("QUALITY", "OBJECT_QUALITY", "TEXT_OCR", "BARCODE")
+        zone = t in ("ACTIVITY", "BUTTON", "PICKING_BIN")
+        is_obj = t in ("OBJECT", "TOOL", "CADCAM")
         self.qc_box.setVisible(quality)
         for w in (self.snap_a, self.btn_a):
-            w.setVisible(not quality)
+            w.setVisible(not quality and not (t == "ACTIVITY"))
         for w in (self.snap_b, self.btn_b):
-            w.setVisible(t == "OBJECT")
-        self.l_tol.setVisible(t == "OBJECT")
-        self.tolerance.setVisible(t == "OBJECT")
+            w.setVisible(is_obj)
+        self.l_tol.setVisible(is_obj)
+        self.tolerance.setVisible(is_obj)
         self.l_algo.setVisible(quality)
         self.algo.setVisible(quality)
-        if t == "OBJECT":
+        if is_obj:
             self.snap_a.title.setText(f"Without {d['name']}")
             self.snap_b.title.setText(f"With {d['name']}")
             self.hint_lbl.setText("Set the working zone around the object, excluding the operator and other moving "
                                   "content. Teaching compares the without and with snapshots.")
+        elif t == "ACTIVITY":
+            self.hint_lbl.setText("Position the workspace with left-drag on camera, then click Teach to start live "
+                                  "motion capture. Perform the activity inside the workspace in real time.")
         elif zone:
             self.snap_a.title.setText("Empty zone")
             self.hint_lbl.setText("Draw the zone where the hand works, keep it empty and capture. Then perform the "
@@ -409,9 +610,14 @@ class DetectionsPage(Page):
         self._thumbs_from_model(d)
         for w in (self.btn_a, self.btn_b, self.b_teach, self.b_cancel):
             w.setEnabled(edit)
-        p = {**{"OBJECT": OBJECT_DEFAULTS, "ACTIVITY": ACTIVITY_DEFAULTS, "BUTTON": BUTTON_DEFAULTS,
-                "QUALITY": QUALITY_DEFAULTS}[t], **d["params"]}
-        self.ft_form.build(PARAM_SPECS[t], p)
+        defaults_map = {
+            "OBJECT": OBJECT_DEFAULTS, "TOOL": OBJECT_DEFAULTS, "CADCAM": OBJECT_DEFAULTS,
+            "ACTIVITY": ACTIVITY_DEFAULTS, "PICKING_BIN": ACTIVITY_DEFAULTS, "BUTTON": BUTTON_DEFAULTS,
+            "QUALITY": QUALITY_DEFAULTS, "OBJECT_QUALITY": QUALITY_DEFAULTS, "TEXT_OCR": {}, "BARCODE": {},
+            "GROUP": {},
+        }
+        p = {**defaults_map.get(t, {}), **d["params"]}
+        self.ft_form.build(PARAM_SPECS.get(t, []), p)
         self.ft_form.set_enabled(edit)
         self.b_ft_save.setEnabled(edit)
         self.ctx.engine.set_watch({d["id"]})
@@ -601,10 +807,11 @@ class DetectionsPage(Page):
         if not ok or not name.strip():
             return
         group, _ = QInputDialog.getText(self, "Group", "Group (optional, e.g. GAUGE, QUALITY CHECK):")
-        params = {"classes": DEFAULT_CLASSES} if det_type == "QUALITY" else {}
+        params = {"classes": DEFAULT_CLASSES} if det_type in ("QUALITY", "OBJECT_QUALITY") else {}
+        sensor_default = SENSORS[det_type][0] if SENSORS.get(det_type) else "DEPTH"
         try:
             det_id = self.ctx.detections.create(job_id, name.strip(), group.strip(), det_type,
-                                                SENSORS[det_type][0], params)
+                                                sensor_default, params)
         except Exception as exc:
             return error(self, f"Could not create detection (name already used?): {exc}")
         self.ctx.audit("DETECTION_CREATED", "detection", det_id, {"name": name, "type": det_type})
@@ -653,6 +860,7 @@ class DetectionsPage(Page):
         if self.det is not None and self.editable():
             self.roi = rect
             self.readout.setText(f"Working zone {rect} - capture and press Teach to apply")
+            self._roi_dragging(rect)
 
     def _hover(self, x: float, y: float) -> None:
         f = self.ctx.latest_frame()
@@ -711,14 +919,21 @@ class DetectionsPage(Page):
             if sensor != d["sensor"]:
                 self.ctx.detections.update_props(d["id"], d["name"], d["group_name"], sensor, d["enabled"],
                                                  d["params"])
-            if d["det_type"] == "OBJECT":
+            if d["det_type"] in ("OBJECT", "TOOL", "CADCAM"):
                 if "without" not in self.caps or "with" not in self.caps:
                     raise TeachError("Capture both the 'without' and 'with' snapshots first.")
                 p = {**OBJECT_DEFAULTS, **d["params"]}
                 model, arrays = teach_object(self.roi, self.caps["without"][0], self.caps["with"][0], sensor,
                                              self.tolerance.currentData(), self.caps["with"][1], p["min_diff"])
                 self.ctx.store_teaching(d["id"], model, arrays)
-            elif d["det_type"] in ("ACTIVITY", "BUTTON"):
+            elif d["det_type"] in ("ACTIVITY", "PICKING_BIN", "BUTTON"):
+                if d["det_type"] == "ACTIVITY":
+                    dlg = TeachActivityDialog(self, self, d, self.roi)
+                    if dlg.exec() != QDialog.Accepted:
+                        return
+                    info(self, f"Activity '{d['name']}' taught successfully with live motion capture.")
+                    self.reload()
+                    return
                 if "baseline" not in self.caps:
                     raise TeachError("Capture the empty zone first.")
                 model, arrays = teach_zone_baseline(self.roi, self.caps["baseline"][0])
@@ -762,14 +977,40 @@ class DetectionsPage(Page):
             self.reload()
 
     # ================================================================== projector tab
-    def _bench_scene(self) -> None:
+    def _get_live_items(self, active_drag_id: int | None = None, active_dx: float = 0.0, active_dy: float = 0.0) -> list[dict]:
         items = []
         for d in self.rows:
             zone = d["model"].get("zone_mm")
             if zone:
+                off = list(d["params"].get("proj_offset_mm") or [0, 0])
+                if active_drag_id == d["id"]:
+                    off = [active_dx, active_dy]
                 items.append({"id": d["id"], "poly": zone, "label": d["name"], "color": "#F2E600", "fill": 0.9,
-                              "offset": tuple(d["params"].get("proj_offset_mm") or (0, 0))})
+                              "offset": tuple(off)})
+        return items
+
+    def _bench_scene(self) -> None:
+        items = self._get_live_items()
         self.bench.set_scene(items, selected=self.det["id"] if self.det else None, editable=self.editable())
+        if self.isVisible():
+            self.main.projector.set_live_scene(items, highlight=self.det["id"] if self.det else None)
+
+    def _zone_dragging(self, det_id: int, dx: float, dy: float) -> None:
+        items = self._get_live_items(active_drag_id=det_id, active_dx=dx, active_dy=dy)
+        self.main.projector.set_live_scene(items, highlight=det_id)
+
+    def _roi_dragging(self, roi_px: list) -> None:
+        if not roi_px or not self.det:
+            return
+        cal = self.ctx.calibration
+        if cal is not None:
+            x, y, w, h = roi_px
+            corners_px = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+            poly_mm = cal.camera_to_bench(corners_px).tolist()
+            items = self._get_live_items()
+            self.main.projector.set_live_scene(items, highlight=self.det["id"],
+                                               live_roi_poly=poly_mm,
+                                               title=f"Drawing Workspace: {self.det['name']}")
 
     def _zone_moved(self, det_id: int, dx: float, dy: float) -> None:
         d = next((r for r in self.rows if r["id"] == det_id), None)
@@ -780,6 +1021,7 @@ class DetectionsPage(Page):
         d["params"] = params
         self.ctx.audit("PROJECTION_SHIFTED", "detection", det_id, {"offset_mm": [dx, dy]})
         self.ctx.load_engine(self.main.edit_job_id)
+        self._bench_scene()
 
     def _reset_shift(self) -> None:
         if self.det is not None and self.editable():
@@ -831,3 +1073,13 @@ class DetectionsPage(Page):
                 if st.detail.get("occlusion") is not None:
                     extra += f" · occlusion {st.detail['occlusion']:.0%}"
                 self.ft_detail.setText(extra)
+
+        # In Fine tune subtab or Projector subtab, project live onto the workbench
+        if self.isVisible() and self.tabs.currentIndex() in (1, 2):
+            self.main.projector.set_live_scene(self._get_live_items(), highlight=self.det["id"] if self.det else None,
+                                               title=f"Fine Tune: {self.det['name']}" if (self.det and self.tabs.currentIndex() == 1) else None)
+
+    def hideEvent(self, e):  # noqa: N802
+        if hasattr(self.main, "projector") and self.main.projector:
+            self.main.projector.clear_live_scene()
+        super().hideEvent(e)

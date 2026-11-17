@@ -454,12 +454,14 @@ def teach_quality(roi, samples: list[tuple[str, str, np.ndarray]], algorithm: st
 
 def build_detector(det: dict, arrays: dict, qc_samples: list[tuple[str, str, np.ndarray]]):
     t = det["det_type"]
-    if t == "OBJECT":
+    if t in ("OBJECT", "TOOL", "CADCAM"):
         return ObjectDetector(det, arrays)
-    if t == "ACTIVITY":
+    if t in ("ACTIVITY", "PICKING_BIN"):
         return ActivityDetector(det, arrays)
     if t == "BUTTON":
         return ButtonDetector(det, arrays)
-    if t == "QUALITY":
+    if t in ("QUALITY", "OBJECT_QUALITY", "TEXT_OCR", "BARCODE"):
         return QualityDetector(det, arrays, qc_samples)
+    if t == "GROUP":
+        return ActivityDetector(det, arrays)
     raise ValueError(t)

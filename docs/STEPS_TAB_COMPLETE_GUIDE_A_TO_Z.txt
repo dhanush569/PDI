@@ -1,0 +1,417 @@
+================================================================================
+RANE VISTA & ARKITE HIM — COMPLETE STEPS TAB GUIDE (A TO Z)
+================================================================================
+Document: Complete Specification of Step Types, Execution Logic, and Controls
+Author: RANE VISTA Development Team
+Station: Rack & Pinion PDI Assembly & Quality Inspection Station
+Date: 2026-11-16
+================================================================================
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. OVERVIEW & WORKSPACE LAYOUT
+2. TOP TOOLBAR & CONTROLS (A TO Z)
+3. COMPLETE STEP LIBRARY BY CATEGORY:
+   - 3.1 Category 1: General (All 12 Steps)
+   - 3.2 Category 2: Variables (All 10 Steps)
+   - 3.3 Category 3: Detections (All 7 Steps & Actions)
+   - 3.4 Category 4: Materials (All Steps)
+   - 3.5 Category 5: Screen Buttons (All Steps)
+   - 3.6 Category 6: Communication (All Steps)
+   - 3.7 Category 7: Extra (All Steps)
+4. STEP EXECUTION LOGIC & CONCURRENCY (COMPOSITE RULES)
+5. REWORK FLOWS & QUALITY CHECK LOOPS
+6. PROPERTIES PANE & VISUALIZATION MAPPING
+7. PRACTICAL EXAMPLE: RACK & PINION ASSEMBLY SEQUENCE
+
+
+================================================================================
+1. OVERVIEW & WORKSPACE LAYOUT
+================================================================================
+The "Steps" tab is the sequence and process authoring center of the station.
+Here, the Manufacturing/Quality Engineer defines the exact step-by-step
+standard operating procedure (SOP), linking operator physical actions, 3D
+depth sensor verifications, vision quality checks, projector visual guides,
+and touchscreen confirmations.
+
+The screen is divided into three primary functional areas:
+  • Left Pane: Step Tree Hierarchy (drag-and-drop tree structure)
+  • Center Pane: Visual Simulation & Live Projection/Screen Preview
+  • Right Pane: Properties, Visualizations, Translations, & Variant Matrix
+
+
+================================================================================
+2. TOP TOOLBAR & CONTROLS (A TO Z)
+================================================================================
+Across the top of the Steps page:
+
+[+ New Step ▼]
+  Opens the complete Step Library flyout with a searchable category panel.
+  Allows adding any step type directly below the currently selected node.
+
+[Indent  (->)]
+  Nests the selected step one level deeper into the step directly above it
+  (e.g., turning a Place step into a child of a Numbered or Composite step).
+
+[Outdent (<-)]
+  Promotes a child step up one hierarchical level out of its parent.
+
+[Move Up (↑) / Move Down (↓)]
+  Reorders execution sequences within the current hierarchy branch.
+
+[Delete (Trash)]
+  Deletes the selected step and any nested child steps inside it.
+
+[Search for Steps [  ] ▲ ▼]
+  Live interactive text filter. Type any keyword to highlight matching steps
+  across deep, multi-level tree branches.
+
+[Expand All / Collapse All]
+  Instantly unfolds the entire tree to review all child substeps, or collapses
+  down to the top-level Numbered milestones.
+
+[Columns Toggle: Variants | Instructions | None]
+  • Variants: Displays variant assignment checkboxes per step.
+  • Instructions: Displays an inline preview of operator guidance text.
+  • None: Compact view displaying only step icons and names.
+
+[Display Preview Switch: Projector | Screen]
+  • Projector: Shows what is optically projected down onto the table/part.
+  • Screen: Shows what appears on the operator's touch monitor.
+
+
+================================================================================
+3. COMPLETE STEP LIBRARY BY CATEGORY
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 CATEGORY 1: GENERAL (ALL 12 STEPS SHOWN IN CATALOG)
+--------------------------------------------------------------------------------
+
+1. NUMBERED STEP
+   • Purpose: Represents a high-level logical assembly milestone from the
+     viewpoint of the human operator (e.g., "1. Fix Cap", "2. Tighten Bolts").
+   • Structure: Acts as a container. Granular detection and validation steps
+     are nested underneath.
+   • UI Display: Automatically populates the "Numbered Steps List" (table of
+     contents) on the operator touchscreen, highlighting current progress.
+
+2. COMPOSITE STEP
+   • Purpose: Groups two or more steps together to enforce complex flow rules,
+     parallel execution, concurrency, or loop repetitions.
+   • Modes:
+     - Sequential: Runs children one-by-one in strict order (default).
+     - Any Order: Steps can be done in any sequence, but all must complete.
+     - One Arbitrary: Completing any single child satisfies the step.
+     - All Simultaneously: All child steps must be completed at the exact same
+       millisecond (e.g., two-hand safety confirmation).
+
+3. DELAY
+   • Purpose: Pauses execution for a specified duration in milliseconds.
+   • Use Case: Waiting 1500 ms for adhesive curing, settling time after press-fit,
+     or allowing a mechanical clamp to stabilize.
+
+4. EXECUTE TASK
+   • Purpose: Reusable process block. Calls a standardized routine defined in
+     the Tasks repository, preventing duplicate programming across jobs.
+
+5. JOB CONTROL
+   • Purpose: Programmatic flow control. Directs the active engine state.
+   • Capabilities:
+     - Jump directly to a specific target step by name or ID.
+     - Abort the running job and return to idle.
+     - Advance immediately to the next step.
+     - Return to the previous detection/instruction step for rework.
+
+6. OPERATOR DIALOG
+   • Purpose: Displays an interactive decision modal on the touch screen.
+   • Configuration: Custom question prompt with multiple buttons
+     (e.g., "Visual Inspection: Pass / Fail", or "Confirm Lot Size").
+   • Storage: Stores operator answer into a designated response variable.
+
+7. PROCESS CONTROL
+   • Purpose: Starts, pauses, resets, restarts, or terminates background
+     asynchronous station processes (e.g., scanner daemon or PLC monitor).
+
+8. RESETTER
+   • Purpose: Resets variables, counters, virtual buttons, or detection flags
+     back to their initial default states prior to a new cycle.
+
+9. SNAPSHOT
+   • Purpose: Captures a photo from the Color RGB, 3D Depth, or Infrared camera.
+   • Storage: Embeds full image data into PostgreSQL / filesystem for audit
+     traceability and customer compliance reports.
+
+10. SWITCH JOB OPTION
+    • Purpose: Structural variant branch. Evaluates the job option (e.g.,
+      Model = Standard vs Luxury vs Export) and creates parallel tree paths.
+    • Merging: Identical branches can be merged to avoid duplicated steps.
+
+11. SWITCH STEP
+    • Purpose: Dynamic data-driven branching. Evaluates a runtime variable
+      (e.g., Torque_Result, Barcode_Prefix) and routes to matching sub-cases.
+    • Fallback: Includes a "Default Case" if no specific value matches.
+
+12. WORK INSTRUCTION
+    • Purpose: Displays explanatory instructions, CAD schematics, or video aids.
+    • Hold Condition: The system remains on this step until confirmed by a
+      touchscreen button or sensor input.
+
+
+--------------------------------------------------------------------------------
+3.2 CATEGORY 2: VARIABLES (DATA PROCESSING & LOGIC)
+--------------------------------------------------------------------------------
+
+1. COUNTER
+   • Increments or decrements an integer variable by 1 (e.g., part counters).
+
+2. FIND AND REPLACE STRING
+   • Searches for a target substring and replaces it with another string
+     (e.g., stripping carriage returns \r\n from raw scanner inputs).
+
+3. FUNCTION
+   • Evaluates arithmetic calculations and logical expressions using variables
+     and constants (e.g., "(Length_mm - Baseline_mm) * ScaleFactor").
+
+4. SET VARIABLE
+   • Assigns a static value or dynamic expression ({{Variable}}) to a variable.
+   • Supports dynamic variable names: "Status_{{Index}}".
+
+5. SPLIT STRING BY INDEX
+   • Extracts a substring based on start index and character length (e.g.,
+     extracting the manufacture year from barcode characters 3 to 6).
+
+6. SPLIT STRING BY ARGUMENT
+   • Splits a string using a delimiter (e.g., ';' or '|') and extracts the Nth
+     token while storing the remainder.
+
+7. STRING FORMATTER
+   • Concatenates text and variable tokens into a unified output string
+     (e.g., "PART: {{PartNo}} | LOT: {{LotId}} | OPERATOR: {{User}}").
+
+8. STRING PARSER
+   • Parses incoming JSON, XML, or serial telegrams from MES / PLC, extracting
+     values into matching project variables.
+
+9. VARIABLE CHANGED
+   • Waits until a specific variable updates, reaches a target value, or
+     matches/differs from another variable.
+
+10. VARIABLE LOGGER
+    • Records the current snapshot of specified variables into the traceability
+      database and audit trail.
+
+
+--------------------------------------------------------------------------------
+3.3 CATEGORY 3: DETECTIONS (3D SENSOR & VISION CHECKS)
+--------------------------------------------------------------------------------
+
+1. OBJECT — PLACE
+   • Validates that the specified physical part enters and remains settled
+     within its calibrated 3D bounding box on the workbench.
+
+2. OBJECT — TAKE
+   • Validates that the specified physical part is lifted or removed from
+     its calibrated zone on the workbench.
+
+3. TOOL — TAKE / PLACE
+   • Tracks physical hand tools (screwdrivers, torque wrenches, grease guns).
+   • Verifies tool is taken before assembly and returned to holster after.
+
+4. PICKING BIN — PICK
+   • Senses the operator's hand entering the assigned picking bin opening.
+   • Validates part retrieval from the correct container.
+
+5. ACTIVITY
+   • Validates dynamic human hand gestures or assembly operations within a zone
+     (e.g., pressing a seal, inserting a wiring clip, twisting a dial).
+   • Supports repetition counts (e.g., requires 3 consecutive actions).
+
+6. VIRTUAL BUTTON
+   • Projects a virtual light button onto the workbench surface.
+   • Completes when the operator's hand hovers over / touches the button.
+
+7. QUALITY CHECK (VISION INSPECTION)
+   • Executes an optical classification algorithm on the region of interest
+     (Contour, Color histogram, Height profile, Template matching, OCR).
+   • Automatically generates Rework branches:
+     - CORRECT: Continues forward.
+     - WRONG: Triggers warning, error projection, and corrective steps.
+     - MISSING: Demands part insertion before advancing.
+
+
+--------------------------------------------------------------------------------
+3.4 CATEGORY 4: MATERIALS
+--------------------------------------------------------------------------------
+
+1. PICK MATERIAL FROM BIN
+   • Links the bill-of-materials (BOM) item directly to its picking bin.
+   • "Number of Items": Automatically appends quantity to instructions
+     (e.g., "Pick 4 x M6 Flange Bolts").
+   • Decrements inventory counters upon valid pick.
+
+2. DYNAMIC MATERIAL STEP
+   • Uses a variable ({{Material_Code}}) to dynamically select the picking bin,
+     enabling flexible multi-model kitting lines.
+
+
+--------------------------------------------------------------------------------
+3.5 CATEGORY 5: SCREEN BUTTONS
+--------------------------------------------------------------------------------
+
+1. PRESS SCREEN BUTTON
+   • Halts execution until the operator taps a specific on-screen UI button
+     (e.g., "Confirm", "Next", "Rework Complete", or "Call Supervisor").
+
+
+--------------------------------------------------------------------------------
+3.6 CATEGORY 6: COMMUNICATION (HARDWARE & NETWORKING)
+--------------------------------------------------------------------------------
+
+1. WAIT FOR BARCODE / SCAN
+   • Waits for scanner trigger (USB HID wedge or RS-232 serial COM).
+   • Validates against regex and stores serial string in BARCODE variable.
+   • Automatically matches and activates the corresponding job variant.
+
+2. WAIT FOR COMMUNICATION
+   • Pauses until a telegram arrives from PLC, torque controller, or MES
+     (e.g., OpenProtocol torque angle/torque OK signal).
+
+3. SEND COMMUNICATION
+   • Emits serial strings, TCP packets, or digital I/O signals to external
+     automation (e.g., releasing pneumatic pallet clamps upon job PASS).
+
+
+--------------------------------------------------------------------------------
+3.7 CATEGORY 7: EXTRA (FILE & SYSTEM UTILITIES)
+--------------------------------------------------------------------------------
+
+1. FILE MOVER
+   • Moves or renames local files (e.g., archiving completed inspection logs).
+
+2. READ FROM FILE
+   • Loads configuration text or parameters from a local file into a variable.
+
+3. SOUND
+   • Plays an audible .WAV alert through workstation speakers (e.g., pleasant
+     chime on step completion, loud buzzer on quality defect).
+
+4. WRITE TO FILE
+   • Appends traceability records, measurements, and timestamps to a local
+     CSV or text file on disk.
+
+
+================================================================================
+4. STEP EXECUTION LOGIC & CONCURRENCY (COMPOSITE RULES)
+================================================================================
+Composite steps manage how multiple child operations execute:
+
+1. SEQUENTIAL (Default)
+   • Step 1 must finish before Step 2 activates, followed by Step 3.
+
+2. ANY ORDER (Validate / Vision License)
+   • All child steps activate concurrently on table/screen.
+   • Operator can perform them in any sequence (e.g., tightening 4 perimeter
+     screws in any order). Advances only when all are satisfied.
+
+3. ONE ARBITRARY STEP
+   • Multiple alternate steps are presented. As soon as ANY single child step
+     is completed, the composite finishes immediately (e.g., confirm via
+     virtual table button OR confirm via touchscreen button).
+
+4. ALL SIMULTANEOUSLY (Safety & Dual-Hand)
+   • Requires all child steps to be triggered within the same timeframe
+     (e.g., two-hand palm buttons pressed concurrently for safety, or
+     verifying both tools are resting in their holders simultaneously).
+
+5. LOOPS & REPETITIONS
+   • Repeat N Times: Executes child block for a fixed number of cycles.
+   • Repeat for Each Element: Iterates through elements in a delimited string
+     or JSON list, providing an active {{Index}} and {{Element}} variable.
+
+
+================================================================================
+5. REWORK FLOWS & QUALITY CHECK LOOPS
+================================================================================
+When adding a Quality Check (Vision) step, the system creates a resilient
+looping architecture:
+
+   [Quality Check Step]
+            │
+            ├──► Evaluates Camera Image against Taught Baseline
+            │
+            ├──► If CORRECT ──► Green projection ──► Advances to Next Step
+            │
+            └──► If WRONG / MISSING:
+                    │
+                    ├──► Highlights defect in bright RED on table
+                    ├──► Plays error sound & sounds buzzer
+                    ├──► Executes corrective sub-steps (e.g., "Remove bad part")
+                    └──► Automatically LOOPS back to Quality Check
+                         until part is repaired and verified CORRECT.
+
+
+================================================================================
+6. PROPERTIES PANE & VISUALIZATION MAPPING
+================================================================================
+Selecting any step opens its properties on the right:
+
+1. Header & Identity
+   • Step Name: Human-readable title in the editor tree.
+   • Object ID: Unique programmatic GUID for API and reporting queries.
+
+2. Operator Instruction
+   • Primary Text: Projected on workbench and shown on screen banner.
+   • Multi-language: Language translations for diverse workforces.
+   • Separator Word: Auto-generates combined text (e.g., "Pick Bolt AND Washer").
+
+3. Projector Visualizations
+   • Highlight Color: Green (#00E676), Blue (#2979FF), Amber (#FF9100), Red (#FF1744).
+   • Shapes: Projected rectangle, circle, contour mask, or animated arrow.
+   • Anchor: Locks to detection zone coordinates.
+
+4. Screen Visualizations
+   • Auxiliary Media: Displays assembly CAD, photo reference, or video tutorial.
+   • Progress Bar & Numbered Steps List widget.
+
+5. Variant Filter Matrix
+   • Checkbox grid: Controls whether the step applies to Variant A, Variant B,
+     or All Variants.
+
+6. Timing & Timeouts
+   • Minimum Dwell Time (ms): Ensures operator holds part stable before validation.
+   • Warning Timeout (s): Turns visual banner amber if step takes unusually long.
+
+
+================================================================================
+7. PRACTICAL EXAMPLE: RACK & PINION ASSEMBLY SEQUENCE
+================================================================================
+Here is how these steps combine into a complete production inspection job:
+
+1. [General: Numbered Step] "1. Component Verification & Scanning"
+   ├── [Communication: Wait for Barcode] "Scan Housing QR Code" (Selects Variant)
+   └── [General: Snapshot] "Record Housing Serial Photo"
+
+2. [General: Numbered Step] "2. Bushing Insertion & Seat Check"
+   ├── [Materials: Pick Material] "Pick Delrin Bushing from Bin 1"
+   ├── [Detections: Object Place] "Place Bushing into Pinion Bore"
+   ├── [Detections: Activity] "Press Bushing Firmly into Seat"
+   └── [Detections: Quality Check] "Verify Bushing Depth & Seating"
+         ├── If CORRECT: Proceeds
+         └── If WRONG: "Re-seat Bushing" (Loops until verified OK)
+
+3. [General: Numbered Step] "3. Rack Bar Placement & Meshing"
+   ├── [Composite Step: Any Order] "Pick Rack Bar & Apply Grease"
+   │     ├── [Materials: Pick Material] "Take Rack Bar from Shelf"
+   │     └── [Detections: Activity] "Apply Synthetic Grease"
+   └── [Detections: Object Place] "Place Rack Bar into Main Casting"
+
+4. [General: Numbered Step] "4. Final Inspection & Sign-off"
+   ├── [General: Snapshot] "Capture Completed PDI Image"
+   ├── [General: Operator Dialog] "Confirm Smooth Rotation Without Play"
+   └── [Communication: Send Communication] "Send PASS Telegram to Line PLC"
+
+================================================================================
+END OF GUIDE
+================================================================================
