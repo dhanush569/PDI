@@ -156,6 +156,13 @@ class Executor(QObject):
         self.variant = next((v for v in self.variants if v["code"] == variant_code), None)
         if self.variant is None and len(self.variants) == 1:
             self.variant = self.variants[0]
+        job_cycle = self.job.get("expected_cycle_s") or (self.job.get("settings") or {}).get("cycle_time_expected_s") or 60
+        cycle_sec = int((self.variant.get("expected_cycle_s") if self.variant and self.variant.get("expected_cycle_s") else None) or job_cycle)
+        hh = cycle_sec // 3600
+        mm = (cycle_sec % 3600) // 60
+        ss = cycle_sec % 60
+        self.variables["Expected Cycle Time"] = f"{hh:02d}:{mm:02d}:{ss:02d}"
+        self.variables["Expected Cycle Time Sec"] = str(cycle_sec)
         self.barcode = None
         self.ng_count = self.forced_count = 0
         self.run_t0, self.run_dt0 = time.monotonic(), _utc()
@@ -289,7 +296,7 @@ class Executor(QObject):
             elif node.children:
                 self._activate(node.children[0])
             return
-        det_id = node.step.get("detection_id")
+        det_id = node.step.get("detection_id") or node.params.get("detection_id")
         st = self.states.get(det_id) if det_id else None
         node.base_counter = st.counter if st else 0
         node.count_needed = int(node.params.get("count", 1) or 1)
@@ -375,7 +382,7 @@ class Executor(QObject):
             return True
 
     def _det_state(self, node: Node):
-        det_id = node.step.get("detection_id")
+        det_id = node.step.get("detection_id") or node.params.get("detection_id")
         return self.states.get(det_id) if det_id else None
 
     def _update_leaf(self, node: Node) -> bool:
@@ -387,17 +394,24 @@ class Executor(QObject):
             node.data["warned"] = True
             self.message.emit(f"Step '{node.step['name']}' is taking longer than {int(timeout)} s", "warn")
 
-        if STEP_SPECS[t]["detection"] and not node.step.get("detection_id"):
+        det_id = node.step.get("detection_id") or node.params.get("detection_id")
+        if STEP_SPECS[t]["detection"] and not det_id:
             if not node.data.get("blocked"):
                 node.data["blocked"] = True
                 self.message.emit(f"Step '{node.step['name']}' has no detection - a supervisor must force it.",
                                   "error")
             return False
 
-        if t in ("PLACE", "TAKE"):
+        if t in ("PLACE", "TAKE", "MATERIAL"):
             st = self._det_state(node)
             if st is None or st.state in ("UNTAUGHT", "DISABLED"):
                 return self._blocked(node, "detection is not taught or disabled")
+            if t == "MATERIAL":
+                needed = int(p.get("items_count", 1) or 1)
+                if st.counter - node.base_counter >= needed:
+                    self._complete(node, "OK", score=st.score)
+                    return True
+                return False
             if st.det_type in ("ACTIVITY", "PICKING_BIN"):
                 if st.counter - node.base_counter >= node.count_needed:
                     self._complete(node, "OK", score=st.score)
@@ -451,7 +465,12 @@ class Executor(QObject):
                 cur_val = int(self.variables.get(var_name, 0))
             except Exception:
                 cur_val = 0
-            new_val = 0 if action == "RESET" else cur_val + 1
+            if action == "RESET":
+                new_val = 0
+            elif action == "DECREMENT":
+                new_val = cur_val - 1
+            else:
+                new_val = cur_val + 1
             self.variables[var_name] = str(new_val)
             if limit > 0 and new_val >= limit:
                 self.message.emit(f"Counter '{var_name}' reached limit ({new_val}/{limit})", "warn")
@@ -496,13 +515,21 @@ class Executor(QObject):
             var_name = str(p.get("variable", "")).strip()
             src = str(self.variables.get(var_name, ""))
             idx = int(p.get("index", 0) or 0)
+            length = int(p.get("length", 0) or 0)
             left_var = str(p.get("left_var", "LEFT")).strip() or "LEFT"
             right_var = str(p.get("right_var", "RIGHT")).strip() or "RIGHT"
-            left_val = src[:idx]
-            right_val = src[idx:]
-            self.variables[left_var] = left_val
-            self.variables[right_var] = right_val
-            self._complete(node, "OK", value=f"{left_val}|{right_val}")
+            if length > 0:
+                res = src[idx:idx + length]
+                self.variables[left_var] = res
+                if right_var:
+                    self.variables[right_var] = src[idx + length:]
+            else:
+                left_val = src[:idx]
+                right_val = src[idx:]
+                self.variables[left_var] = left_val
+                self.variables[right_var] = right_val
+                res = f"{left_val}|{right_val}"
+            self._complete(node, "OK", value=res)
             return True
 
         if t == "SPLIT_STRING_ARG":
@@ -512,8 +539,11 @@ class Executor(QObject):
             idx = int(p.get("index", 0) or 0)
             parts = src.split(delim)
             part_val = parts[idx] if 0 <= idx < len(parts) else ""
-            res_var = f"{var_name}_PART_{idx}" if var_name else f"PART_{idx}"
+            res_var = str(p.get("result_variable", f"{var_name}_PART_{idx}")).strip() or f"{var_name}_PART_{idx}"
+            rem_var = str(p.get("remainder_variable", "REMAINDER")).strip()
             self.variables[res_var] = part_val
+            if rem_var and idx + 1 < len(parts):
+                self.variables[rem_var] = delim.join(parts[idx + 1:])
             self._complete(node, "OK", value=part_val)
             return True
 
@@ -544,11 +574,29 @@ class Executor(QObject):
 
         if t == "VARIABLE_CHANGED":
             var_name = str(p.get("variable", "")).strip()
+            cond = str(p.get("condition", "VALUE_CHANGED")).upper()
+            target_val = str(p.get("target_value", "")).strip()
+            target_val = _VAR_RE.sub(lambda m: self.variables.get(m.group(1), ""), target_val)
             if "init_val" not in node.data:
                 node.data["init_val"] = self.variables.get(var_name, None)
             cur_val = self.variables.get(var_name, None)
-            if cur_val != node.data["init_val"]:
-                self._complete(node, "OK", value=f"{node.data['init_val']} -> {cur_val}")
+
+            satisfied = False
+            if cond == "VALUE_CHANGED":
+                satisfied = (cur_val != node.data["init_val"])
+            elif cond == "EQUALS":
+                satisfied = (str(cur_val) == target_val)
+            elif cond == "NOT_EQUALS":
+                satisfied = (str(cur_val) != target_val)
+            elif cond == "MATCHES_VARIABLE":
+                other_val = self.variables.get(target_val, "")
+                satisfied = (str(cur_val) == str(other_val))
+            elif cond == "NOT_MATCHES_VARIABLE":
+                other_val = self.variables.get(target_val, "")
+                satisfied = (str(cur_val) != str(other_val))
+
+            if satisfied:
+                self._complete(node, "OK", value=f"{var_name}={cur_val}")
                 return True
             if timeout > 0 and elapsed > timeout:
                 self._complete(node, "OK", value="Timeout (unchanged)")
@@ -686,7 +734,8 @@ class Executor(QObject):
             return True
 
         if t == "JOB_CONTROL":
-            action = str(p.get("action", "PAUSE")).upper()
+            action = str(p.get("action", "NEXT_STEP")).upper()
+            target_step = str(p.get("target_step", "")).strip()
             if action == "ABORT":
                 self._finish("FAIL", "Aborted by Job Control")
                 return False
@@ -701,6 +750,40 @@ class Executor(QObject):
                         n.reset()
                     self._activate(self.root)
                 return False
+            elif action == "NEXT_STEP":
+                self._complete(node, "OK", value="Next step")
+                return True
+            elif action == "PREVIOUS_STEP":
+                if node.parent and node.parent.is_container and node.parent.idx > 0:
+                    node.reset()
+                    node.parent.idx -= 1
+                    prev_node = node.parent.children[node.parent.idx]
+                    prev_node.reset()
+                    self._activate(prev_node)
+                    return False
+                self._complete(node, "OK", value="Previous step")
+                return True
+            elif action == "GO_TO_STEP" and target_step:
+                target_node = next((n for n in self.root.walk() if str(n.step.get("id")) == target_step or n.step.get("name") == target_step), None)
+                if target_node:
+                    self._complete(node, "OK", value=f"Jump to {target_step}")
+                    for n in self.root.walk():
+                        if n.state == ACTIVE and n != target_node:
+                            n.state = SKIPPED
+                    target_node.reset()
+                    p = target_node.parent
+                    curr = target_node
+                    while p:
+                        if p.is_container and curr in p.children:
+                            p_idx = p.children.index(curr)
+                            p.idx = (p_idx - 1) if p == node.parent else p_idx
+                            for skipped_sibling in p.children[:p_idx]:
+                                if skipped_sibling.state == PENDING:
+                                    skipped_sibling.state = SKIPPED
+                        curr = p
+                        p = p.parent
+                    self._activate(target_node)
+                    return True
             self._complete(node, "OK", value=action)
             return True
 
@@ -717,10 +800,12 @@ class Executor(QObject):
             return True
 
         if t == "PROCESS_CONTROL":
+            action = str(p.get("action", "START")).upper()
+            proc_name = str(p.get("process_name", "")).strip()
             sig = str(p.get("signal", ""))
             val = str(p.get("value", "1"))
-            self.ctx.audit("PROCESS_CONTROL", "step", node.step.get("id"), {"signal": sig, "value": val})
-            self._complete(node, "OK", value=f"{sig}={val}")
+            self.ctx.audit("PROCESS_CONTROL", "step", node.step.get("id"), {"action": action, "process": proc_name, "signal": sig, "value": val})
+            self._complete(node, "OK", value=f"{proc_name}:{action}")
             return True
 
         if t == "EXECUTE_TASK":

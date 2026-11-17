@@ -1,6 +1,9 @@
 """Jobs page (Arkite layout): job cards on the left, Properties on the right."""
 from __future__ import annotations
 
+import csv
+import io
+import itertools
 import re
 
 import cv2
@@ -23,12 +26,72 @@ CODE_RE = re.compile(r"^[A-Za-z0-9_\-]{2,64}$")
 STATUS_LEVEL = {"DRAFT": "warn", "RELEASED": "ok", "ARCHIVED": "idle"}
 
 
+class OptionsPopup(Popup):
+    """Arkite Job Options Configuration (Section 1.4).
+    Configure product options (e.g. Fuel Type) and all possible values (e.g. Petrol, Diesel, Electric)."""
+    def __init__(self, parent, options: list[dict], editable: bool):
+        super().__init__(parent, "Job Options", "Define configurable product options and their possible values.",
+                         "variants", 680)
+        self.options = [dict(o) for o in options]
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Option Name", "Values (comma-separated)"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setMinimumHeight(220)
+        for opt in self.options:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            self.table.setItem(r, 0, QTableWidgetItem(opt.get("name", "")))
+            vals = opt.get("values", [])
+            val_str = ", ".join(vals) if isinstance(vals, list) else str(vals)
+            self.table.setItem(r, 1, QTableWidgetItem(val_str))
+        self.body.addWidget(self.table)
+        self.err = label("")
+        self.err.setStyleSheet(f"color: {C['ng']}")
+        self.body.addWidget(self.err)
+
+        add = button("Add Option", None, self._add_option, ico="plus")
+        rem = button("Remove", None, lambda: self.table.removeRow(self.table.currentRow()), ico="trash")
+        save = button("Save Options", "primary", self.ok)
+        for b in (add, rem, save):
+            b.setEnabled(editable)
+        self.footer.insertWidget(0, add)
+        self.footer.insertWidget(1, rem)
+        self.add_buttons(button("Cancel", None, self.reject), save)
+
+    def _add_option(self) -> None:
+        name, ok = QInputDialog.getText(self, "New Option", "Option Name (e.g. 'Fuel Type', 'Color'):")
+        if not ok or not name.strip():
+            return
+        vals, ok = QInputDialog.getText(self, "Option Values", "Values (comma-separated, e.g. 'Petrol, Diesel, Electric'):")
+        if not ok:
+            return
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        self.table.setItem(r, 0, QTableWidgetItem(name.strip()))
+        self.table.setItem(r, 1, QTableWidgetItem(vals.strip()))
+
+    def ok(self) -> None:
+        out = []
+        for r in range(self.table.rowCount()):
+            name = self.table.item(r, 0).text().strip() if self.table.item(r, 0) else ""
+            vals_str = self.table.item(r, 1).text().strip() if self.table.item(r, 1) else ""
+            if not name:
+                continue
+            vals = [v.strip() for v in vals_str.split(",") if v.strip()]
+            out.append({"name": name, "values": vals})
+        self.result_options = out
+        self.accept()
+
+
 class VariantsPopup(Popup):
-    def __init__(self, parent, variants: list[dict], editable: bool):
-        super().__init__(parent, "Job variants", "The barcode pattern (regular expression) selects the variant "
-                         "automatically, e.g. LH\\d{6}", "variants", 780)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Code", "Name", "Part number", "Barcode pattern", "Active"])
+    def __init__(self, parent, variants: list[dict], options: list[dict], editable: bool, default_cycle_s: int = 60):
+        super().__init__(parent, "Job variants", "Configure variants, generate from options, or import/export CSV.",
+                         "variants", 840)
+        self.options = options or []
+        self.default_cycle_s = default_cycle_s
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Code", "Name", "Part number", "Cycle Time (s)", "Barcode pattern", "Active"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(240)
@@ -38,41 +101,149 @@ class VariantsPopup(Popup):
         self.err = label("")
         self.err.setStyleSheet(f"color: {C['ng']}")
         self.body.addWidget(self.err)
+
         add = button("Add variant", None, lambda: self._add({}), ico="plus")
+        gen_all = button("Generate all", None, self.generate_all, ico="variants")
+        exp_csv = button("Export CSV", None, self.export_csv, ico="save")
+        imp_csv = button("Import CSV", None, self.import_csv, ico="open")
         rem = button("Remove", None, lambda: self.table.removeRow(self.table.currentRow()), ico="trash")
         save = button("Save variants", "primary", self.ok)
-        for b in (add, rem, save):
+        for b in (add, gen_all, exp_csv, imp_csv, rem, save):
             b.setEnabled(editable)
         self.footer.insertWidget(0, add)
-        self.footer.insertWidget(1, rem)
+        self.footer.insertWidget(1, gen_all)
+        self.footer.insertWidget(2, exp_csv)
+        self.footer.insertWidget(3, imp_csv)
+        self.footer.insertWidget(4, rem)
         self.add_buttons(button("Cancel", None, self.reject), save)
 
     def _add(self, v: dict) -> None:
         r = self.table.rowCount()
         self.table.insertRow(r)
-        for c, k in enumerate(("code", "name", "part_number", "barcode_regex")):
-            self.table.setItem(r, c, QTableWidgetItem(v.get(k) or ""))
+        code = v.get("code") or ""
+        name = v.get("name") or code
+        pn = v.get("part_number") or ""
+        cycle = str(v.get("expected_cycle_s") or "")
+        regex = v.get("barcode_regex") or ""
+        for c, val in enumerate((code, name, pn, cycle, regex)):
+            self.table.setItem(r, c, QTableWidgetItem(val))
         chk = QTableWidgetItem()
         chk.setCheckState(Qt.Checked if v.get("is_active", True) else Qt.Unchecked)
-        self.table.setItem(r, 4, chk)
+        self.table.setItem(r, 5, chk)
         self.table.resizeColumnsToContents()
+
+    def generate_all(self) -> None:
+        """Section 1.5.5: Click 'Generate all' to auto-create variants for all possible combinations."""
+        if not self.options or not all(o.get("values") for o in self.options):
+            return self.err.setText("Define Job Options and their possible values first to generate variants.")
+        self.err.setText("")
+        opt_val_lists = [o["values"] for o in self.options]
+        combos = list(itertools.product(*opt_val_lists))
+        existing_codes = set()
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 0)
+            if it and it.text().strip():
+                existing_codes.add(it.text().strip().upper())
+        added = 0
+        for combo in combos:
+            code = "-".join(str(c).upper().replace(" ", "_") for c in combo)[:32]
+            if code in existing_codes:
+                continue
+            name = " / ".join(str(c) for c in combo)
+            self._add({"code": code, "name": name, "part_number": "", "expected_cycle_s": self.default_cycle_s, "is_active": True})
+            existing_codes.add(code)
+            added += 1
+        self.err.setText(f"Generated {added} new variants from options.")
+
+    def export_csv(self) -> None:
+        """Section 1.6: Export to CSV (Code, Name, Part Number, Expected Cycle Time, Barcode Pattern, Active)."""
+        path, _ = QFileDialog.getSaveFileName(self, "Export Variants to CSV", "variants.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Variant Code", "Variant Name", "Part Number", "Expected Cycle Time", "Barcode Pattern", "Active"])
+                for r in range(self.table.rowCount()):
+                    row = [(self.table.item(r, c).text().strip() if self.table.item(r, c) else "") for c in range(5)]
+                    active = "1" if self.table.item(r, 5).checkState() == Qt.Checked else "0"
+                    writer.writerow(row + [active])
+            self.err.setText(f"Exported {self.table.rowCount()} variants to {path}.")
+        except Exception as exc:
+            self.err.setText(f"Export error: {exc}")
+
+    def import_csv(self) -> None:
+        """Section 1.6: Import from CSV with auto-detected separators."""
+        path, _ = QFileDialog.getOpenFileName(self, "Import Variants from CSV", "", "CSV / Text Files (*.csv *.txt)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                first_line = f.readline()
+                sep = None
+                if first_line.startswith("sep="):
+                    sep = first_line.split("=", 1)[1].strip()
+                    lines = f.readlines()
+                else:
+                    lines = [first_line] + f.readlines()
+                text = "".join(lines)
+                if not sep:
+                    for candidate in [",", ";", "\t", "|", ":"]:
+                        if candidate in lines[0]:
+                            sep = candidate
+                            break
+                    sep = sep or ","
+                reader = csv.reader(io.StringIO(text), delimiter=sep)
+                rows = list(reader)
+                if not rows:
+                    return self.err.setText("CSV file is empty.")
+                start_i = 1 if any("code" in str(col).lower() for col in rows[0]) else 0
+                existing_rows = {}
+                for r in range(self.table.rowCount()):
+                    it = self.table.item(r, 0)
+                    if it and it.text().strip():
+                        existing_rows[it.text().strip().upper()] = r
+                count = 0
+                for row_data in rows[start_i:]:
+                    if not row_data or not row_data[0].strip():
+                        continue
+                    code = row_data[0].strip()
+                    name = row_data[1].strip() if len(row_data) > 1 else code
+                    pn = row_data[2].strip() if len(row_data) > 2 else ""
+                    cycle = row_data[3].strip() if len(row_data) > 3 else ""
+                    regex = row_data[4].strip() if len(row_data) > 4 else ""
+                    active = row_data[5].strip() not in ("0", "false", "False", "no", "No") if len(row_data) > 5 else True
+                    if code.upper() in existing_rows:
+                        r = existing_rows[code.upper()]
+                        self.table.setItem(r, 1, QTableWidgetItem(name))
+                        self.table.setItem(r, 2, QTableWidgetItem(pn))
+                        self.table.setItem(r, 3, QTableWidgetItem(cycle))
+                        self.table.setItem(r, 4, QTableWidgetItem(regex))
+                        self.table.item(r, 5).setCheckState(Qt.Checked if active else Qt.Unchecked)
+                    else:
+                        self._add({"code": code, "name": name, "part_number": pn, "expected_cycle_s": cycle, "barcode_regex": regex, "is_active": active})
+                        existing_rows[code.upper()] = self.table.rowCount() - 1
+                    count += 1
+                self.err.setText(f"Imported {count} variants from CSV.")
+        except Exception as exc:
+            self.err.setText(f"Import error: {exc}")
 
     def ok(self) -> None:
         out, codes = [], set()
         for r in range(self.table.rowCount()):
-            g = [(self.table.item(r, c).text().strip() if self.table.item(r, c) else "") for c in range(4)]
+            g = [(self.table.item(r, c).text().strip() if self.table.item(r, c) else "") for c in range(5)]
             if not g[0]:
                 continue
             if not CODE_RE.match(g[0]) or g[0] in codes:
                 return self.err.setText(f"Variant code '{g[0]}' is invalid or duplicated.")
-            if g[3]:
+            if g[4]:
                 try:
-                    re.compile(g[3])
+                    re.compile(g[4])
                 except re.error as exc:
                     return self.err.setText(f"Barcode pattern of {g[0]} is invalid: {exc}")
             codes.add(g[0])
-            out.append({"code": g[0], "name": g[1] or g[0], "part_number": g[2], "barcode_regex": g[3],
-                        "is_active": self.table.item(r, 4).checkState() == Qt.Checked})
+            out.append({"code": g[0], "name": g[1] or g[0], "part_number": g[2],
+                        "barcode_regex": g[4], "is_active": self.table.item(r, 5).checkState() == Qt.Checked})
         self.result_variants = out
         self.accept()
 
@@ -253,7 +424,14 @@ class JobsPage(Page):
             return
         edit = self.can_edit()
         p.heading("Job", f"ID {j['id']} · {j['status'].title()} · revision {j['revision']}")
-        self.f_name = p.field("Name", QLineEdit(j["name"]))
+        name_row = QWidget()
+        nl = QHBoxLayout(name_row)
+        nl.setContentsMargins(0, 0, 0, 0)
+        self.f_name = QLineEdit(j["name"])
+        nl.addWidget(self.f_name, 1)
+        comment_btn = tool("dialog", "Add internal notes / comments", self._edit_notes)
+        nl.addWidget(comment_btn)
+        p.field("Name", name_row)
         img_row = QWidget()
         il = QHBoxLayout(img_row)
         il.setContentsMargins(0, 0, 0, 0)
@@ -283,7 +461,24 @@ class JobsPage(Page):
         self.f_desc = QPlainTextEdit(j["description"] or "")
         self.f_desc.setFixedHeight(60)
         p.field("Description", self.f_desc)
+
         p.heading("Options")
+        settings = dict(j.get("settings") or {})
+        opts = settings.get("job_options") or []
+        opt_row = QWidget()
+        ol = QHBoxLayout(opt_row)
+        ol.setContentsMargins(0, 0, 0, 0)
+        if opts:
+            for o in opts[:4]:
+                cnt = len(o.get("values", []))
+                ol.addWidget(chip(f"{o['name']} ({cnt})", "info"))
+        else:
+            ol.addWidget(label("No options defined", "Muted"))
+        ol.addStretch(1)
+        ol.addWidget(button("Configure options", None, lambda: self.edit_options(j["id"]), ico="variants"))
+        p.body.addWidget(opt_row)
+
+        p.heading("Variants")
         vs = self.ctx.jobs.variants(j["id"])
         vrow = QWidget()
         vl = QHBoxLayout(vrow)
@@ -362,8 +557,37 @@ class JobsPage(Page):
         self.main.set_edit_job(jid)
         self.reload()
 
+    def _edit_notes(self) -> None:
+        s = self._guard()
+        if not s or not self.job:
+            return
+        settings = dict(self.job.get("settings") or {})
+        cur_notes = settings.get("notes") or self.job.get("description") or ""
+        text, ok = QInputDialog.getMultiLineText(self, "Internal Job Notes", "Internal notes for this job:", cur_notes)
+        if ok and self._guard():
+            settings["notes"] = text.strip()
+            self.ctx.jobs.update(self.job["id"], self.job["name"], self.job.get("part_number") or "", text.strip(), settings, s.user_id)
+            self.ctx.jobs.mark_draft(self.job["id"], s.user_id)
+            self.reload()
+
+    def edit_options(self, job_id: int) -> None:
+        j = self.ctx.jobs.get(job_id)
+        settings = dict(j.get("settings") or {})
+        current_options = settings.get("job_options") or []
+        dlg = OptionsPopup(self, current_options, self.can_edit())
+        if dlg.exec() == QDialog.Accepted and self._guard():
+            settings["job_options"] = dlg.result_options
+            self.ctx.jobs.update(job_id, j["name"], j.get("part_number") or "", j.get("description") or "", settings, self.ctx.session.user_id)
+            self.ctx.jobs.mark_draft(job_id, self.ctx.session.user_id)
+            self.ctx.audit("OPTIONS_CHANGED", "job", job_id, {"options": dlg.result_options})
+            self.reload()
+
     def edit_variants(self, job_id: int) -> None:
-        dlg = VariantsPopup(self, self.ctx.jobs.variants(job_id), self.can_edit())
+        j = self.ctx.jobs.get(job_id)
+        settings = dict(j.get("settings") or {})
+        options = settings.get("job_options") or []
+        default_cycle = int(j.get("expected_cycle_s") or 60)
+        dlg = VariantsPopup(self, self.ctx.jobs.variants(job_id), options, self.can_edit(), default_cycle)
         if dlg.exec() == QDialog.Accepted and self._guard():
             self.ctx.jobs.save_variants(job_id, dlg.result_variants)
             self.ctx.jobs.mark_draft(job_id, self.ctx.session.user_id)

@@ -164,6 +164,122 @@ def test_screen_buttons():
     assert ex.mode == "RESULT"
 
 
+def test_expected_cycle_time_variables():
+    ex = make_executor()
+    job = {
+        "id": 10,
+        "code": "TEST",
+        "name": "Test Job",
+        "revision": 1,
+        "status": "RELEASED",
+        "settings": {"cycle_time_expected_s": 75},
+    }
+    steps = [
+        {"id": 1, "name": "Num", "step_type": "NUMBERED", "params": {}, "parent_id": None, "sort_order": 0},
+        {"id": 2, "name": "Work", "step_type": "WORK_INSTRUCTION", "params": {}, "parent_id": 1, "sort_order": 0},
+    ]
+    ex.load_job(job, [], steps)
+    ex.start_run()
+    assert ex.variables.get("Expected Cycle Time") == "00:01:15"
+    assert ex.variables.get("Expected Cycle Time Sec") == "75"
+
+
+def test_counter_decrement():
+    ex = make_executor()
+    steps = [
+        {"id": 1, "name": "Num", "step_type": "NUMBERED", "params": {}, "parent_id": None, "sort_order": 0},
+        {"id": 2, "name": "Set", "step_type": "SET_VARIABLE", "params": {"variable": "ITEMS", "value": "5"}, "parent_id": 1, "sort_order": 0},
+        {"id": 3, "name": "Dec", "step_type": "COUNTER", "params": {"variable": "ITEMS", "action": "DECREMENT"}, "parent_id": 1, "sort_order": 1},
+    ]
+    ex.load_job({"id": 10, "code": "TEST", "name": "Test Job", "revision": 1, "status": "RELEASED"}, [], steps)
+    ex.start_run()
+    for _ in range(5):
+        ex._advance()
+    assert ex.variables.get("ITEMS") == "4"
+
+
+def test_split_string_extended():
+    ex = make_executor()
+    steps = [
+        {"id": 1, "name": "Num", "step_type": "NUMBERED", "params": {}, "parent_id": None, "sort_order": 0},
+        {"id": 2, "name": "Set", "step_type": "SET_VARIABLE", "params": {"variable": "TXT", "value": "PART-12345-REV2"}, "parent_id": 1, "sort_order": 0},
+        {"id": 3, "name": "SplitIdx", "step_type": "SPLIT_STRING_INDEX", "params": {"variable": "TXT", "index": 5, "length": 5, "left_var": "EXTRACT", "right_var": "REST"}, "parent_id": 1, "sort_order": 1},
+        {"id": 4, "name": "SplitArg", "step_type": "SPLIT_STRING_ARG", "params": {"variable": "TXT", "delimiter": "-", "index": 1, "result_variable": "MID", "remainder_variable": "REM"}, "parent_id": 1, "sort_order": 2},
+    ]
+    ex.load_job({"id": 10, "code": "TEST", "name": "Test Job", "revision": 1, "status": "RELEASED"}, [], steps)
+    ex.start_run()
+    for _ in range(8):
+        ex._advance()
+    assert ex.variables.get("EXTRACT") == "12345"
+    assert ex.variables.get("REST") == "-REV2"
+    assert ex.variables.get("MID") == "12345"
+    assert ex.variables.get("REM") == "REV2"
+
+
+def test_material_picking_step():
+    ex = make_executor()
+    steps = [
+        {"id": 1, "name": "Num", "step_type": "NUMBERED", "params": {}, "parent_id": None, "sort_order": 0},
+        {"id": 2, "name": "PickMat", "step_type": "MATERIAL", "params": {"detection_id": 101, "items_count": 2}, "parent_id": 1, "sort_order": 0},
+    ]
+    ex.load_job({"id": 10, "code": "TEST", "name": "Test Job", "revision": 1, "status": "RELEASED"}, [], steps)
+    ex.start_run()
+    ex._advance()
+
+    leaf = ex.active_leaves()[0]
+    assert leaf.type == "MATERIAL"
+    assert leaf.state == ACTIVE
+
+    # Simulate 1 pick - should remain ACTIVE
+    st = DetState(det_id=101, name="Bin_A", det_type="PICKING_BIN", state="IDLE", counter=1)
+    ex.on_states({101: st})
+    assert leaf.state == ACTIVE
+
+    # Simulate 2nd pick - should complete step
+    st2 = DetState(det_id=101, name="Bin_A", det_type="PICKING_BIN", state="IDLE", counter=2)
+    ex.on_states({101: st2})
+    assert leaf.state == DONE
+
+
+def test_variable_changed_condition():
+    ex = make_executor()
+    steps = [
+        {"id": 1, "name": "Num", "step_type": "NUMBERED", "params": {}, "parent_id": None, "sort_order": 0},
+        {"id": 2, "name": "SetInit", "step_type": "SET_VARIABLE", "params": {"variable": "STATUS", "value": "READY"}, "parent_id": 1, "sort_order": 0},
+        {"id": 3, "name": "WaitChange", "step_type": "VARIABLE_CHANGED", "params": {"variable": "STATUS", "condition": "EQUALS", "target_value": "GO"}, "parent_id": 1, "sort_order": 1},
+    ]
+    ex.load_job({"id": 10, "code": "TEST", "name": "Test Job", "revision": 1, "status": "RELEASED"}, [], steps)
+    ex.start_run()
+    for _ in range(3):
+        ex._advance()
+
+    leaves = ex.active_leaves()
+    assert len(leaves) == 1 and leaves[0].type == "VARIABLE_CHANGED"
+    assert leaves[0].state == ACTIVE
+
+    # Update variable to GO
+    ex.variables["STATUS"] = "GO"
+    ex._advance()
+    assert leaves[0].state == DONE
+
+
+def test_job_control_actions():
+    # Test GO_TO_STEP
+    ex = make_executor()
+    steps = [
+        {"id": 1, "name": "Num", "step_type": "NUMBERED", "params": {}, "parent_id": None, "sort_order": 0},
+        {"id": 2, "name": "Step1", "step_type": "JOB_CONTROL", "params": {"action": "GO_TO_STEP", "target_step": "Step3"}, "parent_id": 1, "sort_order": 0},
+        {"id": 3, "name": "Step2", "step_type": "COUNTER", "params": {"variable": "SKIPPED_VAR", "action": "INCREMENT"}, "parent_id": 1, "sort_order": 1},
+        {"id": 4, "name": "Step3", "step_type": "SET_VARIABLE", "params": {"variable": "REACHED", "value": "YES"}, "parent_id": 1, "sort_order": 2},
+    ]
+    ex.load_job({"id": 10, "code": "TEST", "name": "Test Job", "revision": 1, "status": "RELEASED"}, [], steps)
+    ex.start_run()
+    for _ in range(5):
+        ex._advance()
+    assert ex.variables.get("REACHED") == "YES"
+    assert "SKIPPED_VAR" not in ex.variables
+
+
 if __name__ == "__main__":
     test_composite_one_arbitrary()
     test_composite_any_order()
@@ -171,4 +287,10 @@ if __name__ == "__main__":
     test_variables_execution()
     test_file_operations()
     test_screen_buttons()
+    test_expected_cycle_time_variables()
+    test_counter_decrement()
+    test_split_string_extended()
+    test_material_picking_step()
+    test_variable_changed_condition()
+    test_job_control_actions()
     print("ALL STEPS EXECUTOR TESTS PASSED!")

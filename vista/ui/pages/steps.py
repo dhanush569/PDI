@@ -33,6 +33,7 @@ STEP_ICON = {
     "BACK": "arrow_left", "JOB_CLOSE_BUTTON": "close", "NEXT_BUTTON": "arrow_right", "PREVIOUS_BUTTON": "arrow_left",
     "START": "play", "SEND_COMMUNICATION": "export", "WAIT_COMMUNICATION": "clock",
     "FILE_MOVER": "file", "READ_FROM_FILE": "open", "SOUND": "sound", "WRITE_TO_FILE": "save",
+    "MATERIAL": "cube",
 }
 CATEGORIES = [
     ("General", ["NUMBERED", "COMPOSITE", "DELAY", "EXECUTE_TASK", "JOB_CONTROL", "OPERATOR_DIALOG",
@@ -40,14 +41,14 @@ CATEGORIES = [
     ("Variables", ["COUNTER", "FIND_REPLACE_STRING", "FUNCTION", "SET_VARIABLE", "SPLIT_STRING_ARG",
                    "SPLIT_STRING_INDEX", "STRING_FORMATTER", "STRING_PARSER", "VARIABLE_CHANGED", "VARIABLE_LOGGER"]),
     ("Detections", ["PLACE", "TAKE", "ACTIVITY", "PRESS", "QUALITY_CHECK", "WAIT_BARCODE"]),
-    ("Materials", []),
+    ("Materials", ["MATERIAL"]),
     ("Screen Buttons", ["BACK", "JOB_CLOSE_BUTTON", "NEXT_BUTTON", "PREVIOUS_BUTTON", "START"]),
     ("Communication", ["SEND_COMMUNICATION", "WAIT_COMMUNICATION"]),
     ("Extra", ["FILE_MOVER", "READ_FROM_FILE", "SOUND", "WRITE_TO_FILE"]),
 ]
 TRIGGER_TYPES = {"PLACE", "TAKE", "ACTIVITY", "PRESS", "QUALITY_CHECK", "WAIT_BARCODE", "DELAY", "OPERATOR_DIALOG",
                  "WORK_INSTRUCTION", "VARIABLE_CHANGED", "WAIT_COMMUNICATION", "BACK", "NEXT_BUTTON",
-                 "PREVIOUS_BUTTON", "START", "JOB_CLOSE_BUTTON"}
+                 "PREVIOUS_BUTTON", "START", "JOB_CLOSE_BUTTON", "MATERIAL"}
 
 
 class StepTree(QTreeWidget):
@@ -259,14 +260,14 @@ class NewStepDialog(Popup):
             self.tile_lay.addWidget(label("Materials", "H3"))
             grid_mat = QGridLayout()
             grid_mat.setSpacing(10)
-            btn_new_m = StepTile("+ New Material", "plus", "PLACE", is_primary=True)
-            btn_new_m.clicked.connect(lambda: self._choose("PLACE"))
+            btn_new_m = StepTile("+ New Material", "plus", "MATERIAL", is_primary=True)
+            btn_new_m.clicked.connect(lambda: self._choose("MATERIAL"))
             grid_mat.addWidget(btn_new_m, 0, 0)
             self.tile_lay.addLayout(grid_mat)
 
             self.tile_lay.addWidget(label("Based on variable (advanced)", "Muted"))
-            btn_var_mat = StepTile("Variable based material", "variable", "SET_VARIABLE")
-            btn_var_mat.clicked.connect(lambda: self._choose("SET_VARIABLE"))
+            btn_var_mat = StepTile("Variable based material", "variable", "MATERIAL")
+            btn_var_mat.clicked.connect(lambda: self._choose("MATERIAL"))
             self.tile_lay.addWidget(btn_var_mat)
 
         else:
